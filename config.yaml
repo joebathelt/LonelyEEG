@@ -1,0 +1,4 @@
+raw_data_folder: data/raw_data
+bids_folder: data/bids
+channel_config: UvA_DiverseConfig_ChTypes.csv
+experiment_folder: experiment/rovingOddball_Sep24
