@@ -1,6 +1,7 @@
 # %%
 import argparse
 import os
+import re
 import shutil
 import mne
 import pandas as pd
@@ -11,6 +12,9 @@ from shutil import copyfile
 
 ANON_FMT = 'sub-{:02d}'
 MAPPING_FILENAME = 'participants_id_map.tsv'
+RATING_RE = re.compile(r"SAM_([1-5])")
+RATING_COL_CANDIDATES = ("mouse.clicked_name",
+                         "dimensions.mouse.clicked_name")
 
 
 EVENT_DICT = {
@@ -73,6 +77,96 @@ def write_dataset_description(outfolder):
     }
     with open(target, 'w') as f:
         json.dump(dataset_description, f, indent=4)
+
+
+def write_image_ratings_sidecar(outfolder):
+    target = outfolder / 'task-ImageRatings_beh.json'
+    if target.exists():
+        print(f'  Skipping (exists): {target.name}')
+        return
+    sidecar = {
+        "TaskName": "ImageRatings",
+        "Instructions": "Participants rated face stimuli on three SAM "
+                        "(Self-Assessment Manikin) dimensions: valence, "
+                        "arousal, and dominance.",
+        "stim_file": {
+            "Description": "Image presented on the trial."
+        },
+        "emotion": {
+            "Description": "Emotional expression of the face stimulus.",
+            "Levels": {"happy": "Happy face", "angry": "Angry face"}
+        },
+        "dimension": {
+            "Description": "SAM dimension rated on this trial.",
+            "Levels": {
+                "valence": "How happy or unhappy does this image make you feel?",
+                "arousal": "How excited or calm does this image make you feel?",
+                "dominance": "How controlled or in control does this image make you feel?"
+            }
+        },
+        "rating": {
+            "Description": "Selected SAM manikin (1–5 Likert), parsed "
+                           "from PsychoPy mouse.clicked_name.",
+            "Levels": {"1": "manikin 1", "2": "manikin 2", "3": "manikin 3",
+                       "4": "manikin 4", "5": "manikin 5"}
+        }
+    }
+    with open(target, 'w') as f:
+        json.dump(sidecar, f, indent=4)
+
+
+def process_image_ratings(orig_id, anon_id, raw_data_folder, outfolder,
+                          sourcedata_folder):
+    """Convert the PsychoPy ImageRatings CSV to a BIDS-compliant beh.tsv.
+
+    Looks for *_ImageRatings_*.csv in raw_data/<orig_id>/ first, then in
+    sourcedata/<orig_id>/. Skips silently if the target TSV already exists.
+    """
+    beh_folder = outfolder / anon_id / 'beh'
+    target = beh_folder / f'{anon_id}_task-ImageRatings_beh.tsv'
+    if target.exists():
+        print(f'  Skipping (exists): {target.name}')
+        return
+
+    csv_path = None
+    for folder in (raw_data_folder / orig_id, sourcedata_folder / orig_id):
+        if not folder.exists():
+            continue
+        matches = sorted(folder.glob('*_ImageRatings_*.csv'))
+        if matches:
+            csv_path = matches[0]
+            break
+    if csv_path is None:
+        print(f'  No ImageRatings CSV for {orig_id}, skipping ratings')
+        return
+
+    df = pd.read_csv(csv_path)
+    rating_col = next((c for c in RATING_COL_CANDIDATES if c in df.columns),
+                      None)
+    if rating_col is None:
+        raise ValueError(
+            f'{csv_path.name} has no SAM click column; '
+            f'expected one of {RATING_COL_CANDIDATES}')
+
+    def parse_rating(v):
+        if pd.isna(v):
+            return 'n/a'
+        m = RATING_RE.search(str(v))
+        if m is None:
+            raise ValueError(
+                f'Unexpected SAM value in {csv_path.name}: {v!r}')
+        return int(m.group(1))
+
+    out = pd.DataFrame({
+        'stim_file': df['imagefile'],
+        'emotion': df['emotion'],
+        'dimension': df['dimension'],
+        'rating': [parse_rating(v) for v in df[rating_col]],
+    })
+
+    beh_folder.mkdir(parents=True, exist_ok=True)
+    out.to_csv(target, sep='\t', index=False, na_rep='n/a')
+    print(f'  Wrote {target.relative_to(outfolder)}')
 
 
 def write_participants_tsv(outfolder, participant_list):
@@ -260,27 +354,36 @@ def main(raw_data_folder, out_folder, experiment_folder):
     sourcedata_folder = out_folder / 'sourcedata'
     sourcedata_folder.mkdir(parents=True, exist_ok=True)
     write_dataset_description(out_folder)
+    write_image_ratings_sidecar(out_folder)
 
-    if not raw_data_folder.exists():
-        print(f'No raw_data folder at {raw_data_folder}; nothing new to convert.')
-        return
-
-    raw_participants = sorted([sub for sub in os.listdir(raw_data_folder)
-                               if sub.startswith('sub-')
-                               and (raw_data_folder / sub).is_dir()])
-
-    if not raw_participants:
-        print(f'No sub-* folders in {raw_data_folder}; nothing new to convert.')
-        return
+    if raw_data_folder.exists():
+        raw_participants = sorted([sub for sub in os.listdir(raw_data_folder)
+                                   if sub.startswith('sub-')
+                                   and (raw_data_folder / sub).is_dir()])
+    else:
+        raw_participants = []
+        print(f'No raw_data folder at {raw_data_folder}; '
+              'processing archived participants only.')
 
     mapping = load_or_extend_mapping(sourcedata_folder, raw_participants)
 
+    archived = [d.name for d in sourcedata_folder.iterdir()
+                if d.is_dir() and d.name.startswith('sub-')
+                and d.name in mapping]
+    all_ids = sorted(set(raw_participants) | set(archived))
+
+    if not all_ids:
+        print('No participants to process.')
+        return
+
     counter = 0
-    for orig_id in raw_participants:
+    for orig_id in all_ids:
         anon_id = mapping[orig_id]
         print(f'Processing participant: {orig_id} -> {anon_id}')
         process_participant(orig_id, anon_id, raw_data_folder, out_folder,
                             sourcedata_folder, experiment_folder)
+        process_image_ratings(orig_id, anon_id, raw_data_folder,
+                              out_folder, sourcedata_folder)
         counter += 1
 
     write_participants_tsv(out_folder, sorted(mapping.values()))

@@ -91,6 +91,31 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
         print(f'Marked {len(manual_bad_channels)} channels bad from sidecar: '
               f'{manual_bad_channels}')
 
+    # Detect breaks programmatically — any gap >5s between consecutive
+    # triggers is treated as a break. The BAD_break span runs from the
+    # previous event's onset to 1s before the next event, so the filter,
+    # ICA fit, and EOG/ECG epoch builders below skip these idle periods.
+    print_timestamp('Detecting breaks from event gaps')
+    sfreq = raw.info['sfreq']
+    stim_events = mne.find_events(raw, min_duration=0.01, output='onset')
+    event_times = (stim_events[:, 0] - raw.first_samp) / sfreq
+    gaps = np.diff(event_times)
+    break_mask = gaps > 5.0
+    if break_mask.any():
+        break_starts = event_times[:-1][break_mask]
+        break_durations = (event_times[1:][break_mask] - 1.0) - break_starts
+        valid = break_durations > 0
+        if valid.any():
+            break_annotations = mne.Annotations(
+                onset=break_starts[valid],
+                duration=break_durations[valid],
+                description=['BAD_break'] * int(valid.sum()),
+                orig_time=raw.annotations.orig_time,
+            )
+            raw.set_annotations(raw.annotations + break_annotations)
+            print(f'Marked {int(valid.sum())} break(s) as BAD_break '
+                  f'(total {float(break_durations[valid].sum()):.1f}s)')
+
     # Get the channel locations
     print_timestamp('Defining channels')
     raw = raw.set_montage('biosemi64', match_case=False)
@@ -108,9 +133,12 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
     report.add_raw(raw=raw, title='Raw', psd=False)
     report.save(report_file, open_browser=False, overwrite=True)
 
-    # Filter the data
+    # Filter the data. Skip BAD spans (manual break annotations) so high-
+    # amplitude transients during breaks don't ring into adjacent trial data
+    # through the 0.5 Hz highpass.
     print_timestamp('Filtering 0.5-40Hz')
-    filtered = raw.copy().filter(l_freq=0.5, h_freq=40)
+    filtered = raw.copy().filter(l_freq=0.5, h_freq=40,
+                                 skip_by_annotation=('edge', 'BAD'))
 
     # compute ICA
     print_timestamp('ICA')
@@ -259,8 +287,8 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
     # Run autoreject to detect bad channels and epochs
     print_timestamp('Detecting bad epochs with Autoreject')
     ar = autoreject.AutoReject(
-        n_interpolate=[1, 2, 4, 8, 12, 16],
-        consensus=np.linspace(0, 1.0, 11),
+        n_interpolate=[1, 4, 16, 32],
+        consensus=np.linspace(0, 1.0, 10),
         thresh_method='bayesian_optimization',
         cv=5,
         random_state=23,

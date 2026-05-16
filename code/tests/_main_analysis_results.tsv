@@ -1,0 +1,38 @@
+name	status	duration_ms	message
+fmt_p formats small p as '< .001'	pass	5.00	
+fmt_p drops leading zero	pass	0.00	
+fmt_p returns 'n/a' for non-finite	pass	0.00	
+fmt_p_apa wraps with italic p and uses '< .001' threshold	pass	2.00	
+fmt_p_tex emits LaTeX-friendly small-p	pass	1.00	
+fmt_num rounds to specified digits	pass	2.00	
+fmt_eta2 drops leading zero	pass	1.00	
+apa_f assembles the canonical APA F-string	pass	2.00	
+apa_t assembles the canonical APA t-string	pass	0.00	
+welch_d matches base t.test on a known sample	pass	20.00	
+welch_d returns NA fields when a group has < 2 observations	pass	1.00	
+welch_d drops NAs before counting	pass	0.00	
+welch_d computes Cohen's d with pooled SD	pass	0.00	
+complete_subjects keeps participants with all 4 non-NA cells	pass	14.00	
+complete_subjects drops participants missing cells entirely	pass	6.00	
+welch_row returns a 1-row tibble with the expected columns	pass	8.00	
+fit_mixed_anova returns the expected schema and row order	pass	40.00	
+fit_mixed_anova detects an injected between-group effect	pass	18.00	
+fit_mixed_anova applies Bonferroni *3 to p_bonf	pass	11.00	
+fit_mixed_anova detects emotion main effect	pass	11.00	
+fit_mixed_anova detects repetition main effect	pass	12.00	
+fit_mixed_anova detects group main effect	pass	11.00	
+fit_mixed_anova detects emotion x group interaction	pass	11.00	
+fit_mixed_anova detects repetition x group interaction	pass	11.00	
+fit_mixed_anova detects emotion x repetition interaction	pass	10.00	
+fit_mixed_anova detects 3-way emotion x repetition x group	pass	10.00	
+fit_mixed_anova does not flag spurious effects under a single injection	pass	14.00	
+decompose_interactions: 3-way sig -> 4 between-group tests, alpha = .0125	pass	37.00	
+decompose_interactions: repetition x group sig -> 2 tests, one per repetition	pass	9.00	
+decompose_interactions: emotion x group sig -> 2 tests, one per emotion	pass	6.00	
+decompose_interactions: group main only -> 1 overall test, alpha = .05	pass	3.00	
+decompose_interactions: no group-involving sig -> NULL tests	pass	1.00	
+decompose_interactions: 3-way trumps lower-order group interactions	pass	8.00	
+decompose_interactions: Bonferroni p column is p * k clipped at 1	pass	6.00	
+render_markdown writes a report mentioning the cluster and ANOVA	pass	24.00	
+render_table_tex writes a LaTeX xltabular with the cluster header	pass	13.00	
+render_prose_tex writes a sample-size sentence and a per-cluster sentence	pass	28.00	
