@@ -1,11 +1,16 @@
 # %%
 import argparse
 import os
+import shutil
 import mne
 import pandas as pd
 import json
 from pathlib import Path
 from shutil import copyfile
+
+
+ANON_FMT = 'sub-{:02d}'
+MAPPING_FILENAME = 'participants_id_map.tsv'
 
 
 EVENT_DICT = {
@@ -76,32 +81,76 @@ def write_participants_tsv(outfolder, participant_list):
     if target.exists():
         print(f'  Skipping (exists, may contain manual annotations): {target.name}')
         return
-    participants_df = pd.DataFrame(participant_list).drop_duplicates()
+    participants_df = pd.DataFrame({'participant_id': sorted(set(participant_list))})
     participants_df.to_csv(target, index=False, sep='\t')
 
 
-def process_participant(participant, raw_data_folder, outfolder, experiment_folder):
-    bdf_files = [f for f in os.listdir(raw_data_folder / participant) if f.endswith('.bdf')]
-    if not bdf_files:
-        print(f'  No BDF file found for {participant}, skipping')
+def load_or_extend_mapping(sourcedata_folder, raw_participants):
+    """Return {original_id: anonymous_id} for all known + new participants.
+
+    Loads existing mapping from sourcedata_folder/MAPPING_FILENAME if present,
+    assigns the next free sub-NN to any raw_participants not yet mapped
+    (alphabetical order), and writes the updated mapping back atomically.
+    """
+    map_path = sourcedata_folder / MAPPING_FILENAME
+    if map_path.exists():
+        existing = pd.read_csv(map_path, sep='\t')
+        mapping = dict(zip(existing['original_id'], existing['anonymous_id']))
+    else:
+        mapping = {}
+
+    used_numbers = {int(anon.split('-')[1]) for anon in mapping.values()}
+    next_n = 1
+    for orig in sorted(raw_participants):
+        if orig in mapping:
+            continue
+        while next_n in used_numbers:
+            next_n += 1
+        mapping[orig] = ANON_FMT.format(next_n)
+        used_numbers.add(next_n)
+
+    sourcedata_folder.mkdir(parents=True, exist_ok=True)
+    map_df = pd.DataFrame(
+        sorted(((anon, orig) for orig, anon in mapping.items()),
+               key=lambda x: x[0]),
+        columns=['anonymous_id', 'original_id'],
+    )
+    tmp_path = map_path.with_suffix(map_path.suffix + '.tmp')
+    map_df.to_csv(tmp_path, index=False, sep='\t')
+    tmp_path.replace(map_path)
+    return mapping
+
+
+def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
+                        sourcedata_folder, experiment_folder):
+    raw_subject_folder = raw_data_folder / orig_id
+    subject_eeg_folder = outfolder / anon_id / 'eeg'
+
+    bdf_dst = subject_eeg_folder / f'{anon_id}_task-RovingOddball_eeg.bdf'
+    events_dst = subject_eeg_folder / f'{anon_id}_task-RovingOddball_events.tsv'
+    channels_dst = subject_eeg_folder / f'{anon_id}_task-RovingOddball_channels.tsv'
+    json_dst = subject_eeg_folder / f'{anon_id}_task-RovingOddball_eeg.json'
+
+    all_present = all(p.exists() for p in (bdf_dst, events_dst, channels_dst, json_dst))
+
+    if all_present:
+        print(f'  All BIDS files already present for {anon_id} ({orig_id}), skipping conversion')
+        archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
         return
 
-    subject_eeg_folder = outfolder / participant / 'eeg'
+    if not raw_subject_folder.exists():
+        print(f'  No raw folder for {orig_id} and BIDS incomplete; skipping')
+        return
 
-    bdf_dst = subject_eeg_folder / f'{participant}_task-RovingOddball_eeg.bdf'
-    events_dst = subject_eeg_folder / f'{participant}_task-RovingOddball_events.tsv'
-    channels_dst = subject_eeg_folder / f'{participant}_task-RovingOddball_channels.tsv'
-    json_dst = subject_eeg_folder / f'{participant}_task-RovingOddball_eeg.json'
-
-    # Short-circuit if everything for this participant already exists
-    if all(p.exists() for p in (bdf_dst, events_dst, channels_dst, json_dst)):
-        print(f'  All BIDS files already present for {participant}, skipping')
+    bdf_files = [f for f in os.listdir(raw_subject_folder) if f.endswith('.bdf')]
+    if not bdf_files:
+        print(f'  No BDF file found for {orig_id}, skipping')
         return
 
     subject_eeg_folder.mkdir(parents=True, exist_ok=True)
 
     # Copy raw BDF file to BIDS structure
-    src = raw_data_folder / participant / bdf_files[0]
+    src = raw_subject_folder / bdf_files[0]
     if bdf_dst.exists():
         print(f'  Skipping (exists): {bdf_dst.name}')
     else:
@@ -121,11 +170,11 @@ def process_participant(participant, raw_data_folder, outfolder, experiment_fold
         events_onset = mne.find_events(raw, min_duration=0.01, output='onset')
 
         # Read experimental CSV to get stimulus durations
-        csv_files = [f for f in os.listdir(raw_data_folder / participant)
+        csv_files = [f for f in os.listdir(raw_subject_folder)
                      if 'RovingOddball' in f and f.endswith('.csv')]
         durations_dict = {}
         if csv_files:
-            exp_data = pd.read_csv(raw_data_folder / participant / csv_files[0])
+            exp_data = pd.read_csv(raw_subject_folder / csv_files[0])
             if 'face.started' in exp_data.columns and 'face.stopped' in exp_data.columns:
                 face_trials = exp_data[exp_data['trigger_code'].notna()].copy()
                 face_trials['duration'] = face_trials['face.stopped'] - face_trials['face.started']
@@ -184,6 +233,22 @@ def process_participant(participant, raw_data_folder, outfolder, experiment_fold
         with open(json_dst, 'w') as f:
             json.dump(eeg_json, f, indent=4)
 
+    # All four BIDS files are now in place; archive the raw folder.
+    archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
+
+
+def archive_raw_to_sourcedata(src, dst):
+    """Move src raw subject folder to dst inside sourcedata. No-op if src
+    is gone (already archived) or dst already exists."""
+    if not src.exists():
+        return
+    if dst.exists():
+        print(f'  Sourcedata folder already exists, leaving raw in place: {dst}')
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    print(f'  Archived {src.name} -> sourcedata/{dst.name}')
+
 
 # %%
 def main(raw_data_folder, out_folder, experiment_folder):
@@ -192,17 +257,33 @@ def main(raw_data_folder, out_folder, experiment_folder):
     experiment_folder = Path(experiment_folder)
 
     out_folder.mkdir(parents=True, exist_ok=True)
+    sourcedata_folder = out_folder / 'sourcedata'
+    sourcedata_folder.mkdir(parents=True, exist_ok=True)
     write_dataset_description(out_folder)
 
-    participant_list = sorted([sub for sub in os.listdir(raw_data_folder) if sub.startswith('sub-')])
+    if not raw_data_folder.exists():
+        print(f'No raw_data folder at {raw_data_folder}; nothing new to convert.')
+        return
+
+    raw_participants = sorted([sub for sub in os.listdir(raw_data_folder)
+                               if sub.startswith('sub-')
+                               and (raw_data_folder / sub).is_dir()])
+
+    if not raw_participants:
+        print(f'No sub-* folders in {raw_data_folder}; nothing new to convert.')
+        return
+
+    mapping = load_or_extend_mapping(sourcedata_folder, raw_participants)
 
     counter = 0
-    for participant in participant_list:
-        print('Processing participant:', participant)
-        process_participant(participant, raw_data_folder, out_folder, experiment_folder)
+    for orig_id in raw_participants:
+        anon_id = mapping[orig_id]
+        print(f'Processing participant: {orig_id} -> {anon_id}')
+        process_participant(orig_id, anon_id, raw_data_folder, out_folder,
+                            sourcedata_folder, experiment_folder)
         counter += 1
 
-    write_participants_tsv(out_folder, participant_list)
+    write_participants_tsv(out_folder, sorted(mapping.values()))
 
     print(f"Processed {counter} participants")
     print(f"BIDS dataset created at: {out_folder}")
@@ -210,10 +291,14 @@ def main(raw_data_folder, out_folder, experiment_folder):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Organise raw EEG recordings into a BIDS dataset. "
-                    "Existing files are never overwritten.")
+        description="Organise raw EEG recordings into a BIDS dataset with "
+                    "anonymous participant IDs. Existing files are never "
+                    "overwritten. Raw subject folders are moved into "
+                    "<out-folder>/sourcedata/ after conversion.")
     parser.add_argument('--raw-data-folder', required=True, type=Path,
-                        help='Folder containing sub-* directories with raw .bdf and .csv files.')
+                        help='Folder containing sub-* directories with raw '
+                             '.bdf and .csv files. Subject folders are moved '
+                             'into <out-folder>/sourcedata/ after conversion.')
     parser.add_argument('--out-folder', required=True, type=Path,
                         help='Destination BIDS folder.')
     parser.add_argument('--experiment-folder', required=True, type=Path,

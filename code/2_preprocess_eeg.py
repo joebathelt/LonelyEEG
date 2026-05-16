@@ -14,6 +14,19 @@ def print_timestamp(message):
     print(time.strftime("%H:%M:%S", time.localtime()))
     print(message)
 
+
+def read_manual_bad_channels(channels_tsv):
+    """Return channel names whose status column is not 'good' in a BIDS
+    channels.tsv. Bad-channel annotations on the BDF can get lost, so the
+    sidecar is the authoritative source."""
+    if channels_tsv is None or not Path(channels_tsv).exists():
+        return []
+    df = pd.read_csv(channels_tsv, sep='\t')
+    if 'status' not in df.columns or 'name' not in df.columns:
+        return []
+    return [str(name) for name, status in zip(df['name'], df['status'])
+            if str(status).strip().lower() != 'good']
+
 def add_preprocessing_summary(report, epochs_original, epochs_final,
                              bad_channels):
     n_total = len(epochs_original)
@@ -55,7 +68,8 @@ def add_preprocessing_summary(report, epochs_original, epochs_final,
 
     return report
 
-def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config):
+def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
+                   channels_tsv=None):
     # Setup the output folders
     os.makedirs(out_folder, exist_ok=True)
 
@@ -66,6 +80,16 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config):
     # Set channel types
     channel_mapping = pd.read_csv(channel_config).set_index('ch_name').to_dict()['ch_type']
     raw.set_channel_types(channel_mapping, verbose=False)
+
+    # Apply manually annotated bad channels from BIDS sidecar — bad-channel
+    # marks on the BDF can get lost on copy/conversion, so the channels.tsv
+    # is treated as authoritative.
+    manual_bad_channels = [ch for ch in read_manual_bad_channels(channels_tsv)
+                           if ch in raw.ch_names]
+    if manual_bad_channels:
+        raw.info['bads'] = sorted(set(raw.info['bads']) | set(manual_bad_channels))
+        print(f'Marked {len(manual_bad_channels)} channels bad from sidecar: '
+              f'{manual_bad_channels}')
 
     # Get the channel locations
     print_timestamp('Defining channels')
@@ -107,7 +131,8 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config):
         eog_average = None
         eog_components = []
         eog_scores = None
-        filtered.info["bads"] = ['hEOG-01', 'hEOG-02', 'vEOG-01', 'vEOG-02']
+        filtered.info["bads"] = sorted(set(filtered.info["bads"]) |
+                                       {'hEOG-01', 'hEOG-02', 'vEOG-01', 'vEOG-02'})
 
     try: 
         ecg_average = mne.preprocessing.create_ecg_epochs(filtered).average()
@@ -118,7 +143,7 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config):
         ecg_average = None
         ecg_components = []
         ecg_scores = None
-        filtered.info["bads"] = ['ECG1', 'ECG2']
+        filtered.info["bads"] = sorted(set(filtered.info["bads"]) | {'ECG1', 'ECG2'})
 
     report.add_ica(
         ica=ica,
@@ -220,7 +245,7 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config):
         random_state=23
     )
     epochs_clean = ransac.fit_transform(epochs)
-    bad_chs = list(set(ransac.bad_chs_ + bad_by_amplitude))
+    bad_chs = sorted(set(ransac.bad_chs_) | set(bad_by_amplitude) | set(manual_bad_channels))
     print(f'Total bad channels: {len(bad_chs)} - {bad_chs}')
 
     # Step 4: AutoReject for fine-grained epoch rejection and channel interpolation
@@ -299,13 +324,15 @@ def main(channel_config, in_folder):
     for subject in subject_list:
         print(subject)
         in_file = in_folder / f'{subject}/eeg/{subject}_task-RovingOddball_eeg.bdf'
-        out_folder = in_folder / f'processed/{subject}/eeg'
-        out_file = out_folder / f'{subject}_task-RovingOddball_eeg-epo.edf'
+        channels_tsv = in_folder / f'{subject}/eeg/{subject}_task-RovingOddball_channels.tsv'
+        out_folder = in_folder / f'derivatives/{subject}/eeg'
+        out_file = out_folder / f'{subject}_task-RovingOddball_eeg-epo.fif.gz'
         report_file = out_folder / f'{subject}_task-RovingOddball_eeg.html'
 
         if not os.path.isfile(out_file):
             try:
-                _ = preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config)
+                _ = preprocess_EEG(in_file, out_folder, out_file, report_file,
+                                   channel_config, channels_tsv=channels_tsv)
             except:
                 print(f"Error with {subject}")
         else:
