@@ -229,6 +229,8 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
 
     if all_present:
         print(f'  All BIDS files already present for {anon_id} ({orig_id}), skipping conversion')
+        if anonymize_bdf_patient_id(bdf_dst, orig_id, anon_id):
+            print(f'  Anonymized patient ID in {bdf_dst.name}')
         archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
         return
 
@@ -249,6 +251,9 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
         print(f'  Skipping (exists): {bdf_dst.name}')
     else:
         copyfile(src, bdf_dst)
+
+    if anonymize_bdf_patient_id(bdf_dst, orig_id, anon_id):
+        print(f'  Anonymized patient ID in {bdf_dst.name}')
 
     # Read raw once if any of events/channels/json need to be written
     needs_raw = not (events_dst.exists() and channels_dst.exists() and json_dst.exists())
@@ -329,6 +334,23 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
 
     # All four BIDS files are now in place; archive the raw folder.
     archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
+
+
+def anonymize_bdf_patient_id(bdf_path, orig_id, anon_id):
+    """Replace orig_id with anon_id in the BDF local patient identification
+    field (header bytes 8–87). MNE parses this field into
+    raw.info['subject_info'], so updating it here keeps the anonymized ID
+    in the BIDS copy. Returns True if a replacement was made.
+    """
+    with open(bdf_path, 'r+b') as f:
+        f.seek(8)
+        patient_field = f.read(80).decode('ascii', errors='replace')
+        if orig_id not in patient_field:
+            return False
+        new_field = patient_field.replace(orig_id, anon_id).ljust(80)[:80]
+        f.seek(8)
+        f.write(new_field.encode('ascii'))
+        return True
 
 
 def archive_raw_to_sourcedata(src, dst):
