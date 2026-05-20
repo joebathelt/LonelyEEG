@@ -7,12 +7,20 @@ DEMOGRAPHICS_TEX = "results/demographics_table.tex"
 DEMOGRAPHICS_TSV = "results/demographics_table.tsv"
 MENTAL_HEALTH_TEX = "results/mental_health_table.tex"
 MENTAL_HEALTH_TSV = "results/mental_health_table.tsv"
+BSI_SUBSCALES_TEX = "results/bsi_subscales_table.tex"
+BSI_SUBSCALES_TSV = "results/bsi_subscales_table.tsv"
 CLUSTER_AMPLITUDES_TSV = "results/cluster_amplitudes.tsv"
 CLUSTER_WAVEFORMS_TSV = "results/cluster_waveforms.tsv"
 CLUSTER_CHANNELS_TSV = "results/cluster_channel_positions.tsv"
 MAIN_REPORT = "results/main_analysis_report.md"
 MAIN_PROSE_TEX = "results/main_analysis_results.tex"
 MAIN_TABLE_TEX = "results/main_analysis_table.tex"
+MAIN_SENS_EUROPE_REPORT = "results/main_analysis_sensitivity_europe_report.md"
+MAIN_SENS_EUROPE_PROSE_TEX = "results/main_analysis_sensitivity_europe_results.tex"
+MAIN_SENS_EUROPE_TABLE_TEX = "results/main_analysis_sensitivity_europe_table.tex"
+MAIN_SENS_COV_REPORT = "results/main_analysis_sensitivity_ethnicity_covariate_report.md"
+MAIN_SENS_COV_PROSE_TEX = "results/main_analysis_sensitivity_ethnicity_covariate_results.tex"
+MAIN_SENS_COV_TABLE_TEX = "results/main_analysis_sensitivity_ethnicity_covariate_table.tex"
 IMAGE_RATINGS_TSV = "results/image_ratings.tsv"
 RATINGS_REPORT = "results/ratings_analysis_report.md"
 RATINGS_PROSE_TEX = "results/ratings_analysis_results.tex"
@@ -26,10 +34,17 @@ rule all:
         QC_TSV,
         DEMOGRAPHICS_TEX,
         MENTAL_HEALTH_TEX,
+        BSI_SUBSCALES_TEX,
         CLUSTER_AMPLITUDES_TSV,
         MAIN_REPORT,
         MAIN_PROSE_TEX,
         MAIN_TABLE_TEX,
+        MAIN_SENS_EUROPE_REPORT,
+        MAIN_SENS_EUROPE_PROSE_TEX,
+        MAIN_SENS_EUROPE_TABLE_TEX,
+        MAIN_SENS_COV_REPORT,
+        MAIN_SENS_COV_PROSE_TEX,
+        MAIN_SENS_COV_TABLE_TEX,
         IMAGE_RATINGS_TSV,
         RATINGS_REPORT,
         RATINGS_PROSE_TEX,
@@ -90,6 +105,8 @@ rule demographics_table:
         tsv=DEMOGRAPHICS_TSV,
         mh_tex=MENTAL_HEALTH_TEX,
         mh_tsv=MENTAL_HEALTH_TSV,
+        bsi_tex=BSI_SUBSCALES_TEX,
+        bsi_tsv=BSI_SUBSCALES_TSV,
     shell:
         "python code/4_demographics_table.py "
         "--participants-tsv {input.participants} "
@@ -97,7 +114,9 @@ rule demographics_table:
         "--out-tex {output.tex} "
         "--out-tsv {output.tsv} "
         "--out-mh-tex {output.mh_tex} "
-        "--out-mh-tsv {output.mh_tsv}"
+        "--out-mh-tsv {output.mh_tsv} "
+        "--out-bsi-tex {output.bsi_tex} "
+        "--out-bsi-tsv {output.bsi_tsv}"
 
 
 rule extract_amplitudes:
@@ -125,6 +144,52 @@ rule main_analysis:
     shell:
         "Rscript code/6_main_analysis.R "
         "--amplitudes-tsv {input.amplitudes} "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table}"
+
+
+# Sensitivity analysis: re-runs the main 3-way mixed ANOVA on the subset of
+# participants who report at least one grandparent born in Europe. Restriction
+# is applied inside 6_main_analysis.R via --ethnicity-filter, which token-
+# matches the comma-separated `ethnicity` column in participants.tsv.
+rule sensitivity_analysis_ethnicity_europe:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_TSV,
+        participants=PARTICIPANTS_TSV,
+    output:
+        report=MAIN_SENS_EUROPE_REPORT,
+        prose=MAIN_SENS_EUROPE_PROSE_TEX,
+        table=MAIN_SENS_EUROPE_TABLE_TEX,
+    shell:
+        "Rscript code/6_main_analysis.R "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--participants-tsv {input.participants} "
+        "--ethnicity-filter Europe "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table}"
+
+
+# Sensitivity analysis (ANCOVA): re-runs the main 3-way mixed ANOVA on the
+# full post-QC sample (NA-ethnicity participants dropped) with a binary
+# European-descent indicator (1 if `ethnicity` lists "Europe" as a parent/
+# grandparent continent of birth, 0 otherwise) included as a between-subjects
+# nuisance covariate via afex::aov_ez(covariate = ...). Mutually exclusive
+# with --ethnicity-filter.
+rule sensitivity_analysis_ethnicity_covariate:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_TSV,
+        participants=PARTICIPANTS_TSV,
+    output:
+        report=MAIN_SENS_COV_REPORT,
+        prose=MAIN_SENS_COV_PROSE_TEX,
+        table=MAIN_SENS_COV_TABLE_TEX,
+    shell:
+        "Rscript code/6_main_analysis.R "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--participants-tsv {input.participants} "
+        "--ethnicity-covariate Europe "
         "--out-report {output.report} "
         "--out-prose-tex {output.prose} "
         "--out-table-tex {output.table}"
@@ -226,5 +291,7 @@ rule clean_analysis:
         f"{CLUSTER_AMPLITUDES_TSV} "
         f"{CLUSTER_WAVEFORMS_TSV} {CLUSTER_CHANNELS_TSV} "
         f"{MAIN_REPORT} {MAIN_PROSE_TEX} {MAIN_TABLE_TEX} "
+        f"{MAIN_SENS_EUROPE_REPORT} {MAIN_SENS_EUROPE_PROSE_TEX} {MAIN_SENS_EUROPE_TABLE_TEX} "
+        f"{MAIN_SENS_COV_REPORT} {MAIN_SENS_COV_PROSE_TEX} {MAIN_SENS_COV_TABLE_TEX} "
         f"{TESTS_REPORT} "
         f"{FIGURE_ERPS}"

@@ -59,6 +59,19 @@ parse_args <- function() {
   required <- c("amplitudes-tsv", "out-report", "out-prose-tex", "out-table-tex")
   missing <- setdiff(required, names(out))
   if (length(missing)) stop("Missing required args: ", paste(missing, collapse = ", "))
+  # --ethnicity-filter requires --participants-tsv (the source of the ethnicity column).
+  if (!is.null(out[["ethnicity-filter"]]) && is.null(out[["participants-tsv"]])) {
+    stop("--ethnicity-filter requires --participants-tsv")
+  }
+  if (!is.null(out[["ethnicity-covariate"]]) && is.null(out[["participants-tsv"]])) {
+    stop("--ethnicity-covariate requires --participants-tsv")
+  }
+  # Sample restriction (--ethnicity-filter) and covariate adjustment
+  # (--ethnicity-covariate) are alternative sensitivity modes; running them
+  # together would conflate the two.
+  if (!is.null(out[["ethnicity-filter"]]) && !is.null(out[["ethnicity-covariate"]])) {
+    stop("--ethnicity-filter and --ethnicity-covariate are mutually exclusive")
+  }
   out
 }
 
@@ -141,12 +154,19 @@ welch_d <- function(a, b) {
        n_a = na, n_b = nb)
 }
 
-fit_mixed_anova <- function(d) {
+fit_mixed_anova <- function(d, covariate_col = NULL) {
   # 3-way mixed ANOVA via afex::aov_ez (Type III, classical multi-stratum
-  # error terms; partial eta-squared as effect size).
+  # error terms; partial eta-squared as effect size). When covariate_col is
+  # supplied, the named numeric column on `d` is passed as an afex covariate
+  # (between-subjects nuisance regressor); afex emits extra Source rows for
+  # the covariate and its interactions with the within factors, which are
+  # filtered out by the `match(desired, ...)` step below. The covariate's own
+  # main-effect row is preserved on an "covariate_row" attribute so callers
+  # can report it separately.
   fit <- afex::aov_ez(
     id = "participant_id", dv = "amplitude", data = d,
     within = c("emotion", "repetition"), between = "group",
+    covariate = covariate_col,
     type = 3, anova_table = list(es = "pes")
   )
   tbl <- as.data.frame(fit$anova_table)
@@ -170,12 +190,18 @@ fit_mixed_anova <- function(d) {
     p_unc = tbl[["Pr(>F)"]],
     pes = tbl[["pes"]]
   )
+  covariate_row <- NULL
+  if (!is.null(covariate_col)) {
+    cov_idx <- which(tbl$Source == covariate_col)
+    if (length(cov_idx) == 1) covariate_row <- tbl[cov_idx, ]
+  }
   desired <- c("group", "emotion", "repetition",
                "emotion x group", "repetition x group",
                "emotion x repetition", "emotion x repetition x group")
   tbl <- tbl[match(desired, tbl$Source), ]
   tbl$p_bonf <- pmin(tbl$p_unc * 3, 1.0)
   tbl$significant_at_cluster_alpha <- tbl$p_unc < ALPHA_CLUSTER
+  attr(tbl, "covariate_row") <- covariate_row
   tbl
 }
 
@@ -186,6 +212,40 @@ complete_subjects <- function(d_cluster) {
     summarise(n_cells = n(), .groups = "drop") %>%
     filter(n_cells == 4) %>%
     pull(participant_id)
+}
+
+# Returns the participant_ids whose `ethnicity` field contains `token` as one
+# of its comma-separated entries (whitespace around entries is trimmed; matching
+# is case-sensitive — the source data uses canonical case, e.g. "Europe").
+# Token-split matching avoids substring false positives such as "East Asia"
+# matching "South-East Asia".
+filter_participants_by_ethnicity <- function(participants, token) {
+  tokens <- strsplit(as.character(participants$ethnicity), ",", fixed = TRUE)
+  keep <- vapply(tokens, function(xs) {
+    if (length(xs) == 0) return(FALSE)
+    any(trimws(xs) == token, na.rm = TRUE)
+  }, logical(1))
+  as.character(participants$participant_id[keep])
+}
+
+# Binarises participants' ethnicity to a numeric 0/1 indicator: 1 iff `token`
+# appears as a comma-separated entry in the `ethnicity` field, 0 otherwise.
+# Rows with NA ethnicity are *dropped* from the result (afex covariates do not
+# tolerate NA values; the orchestrator joins the result inner-style so NA-
+# ethnicity participants are excluded from the analytic sample). Numeric (not
+# logical/integer) so afex::aov_ez treats it as a continuous between-subject
+# covariate. Token-split matching mirrors filter_participants_by_ethnicity.
+binarise_ethnicity <- function(participants, token) {
+  eth <- as.character(participants$ethnicity)
+  keep <- !is.na(eth)
+  pids <- as.character(participants$participant_id)[keep]
+  tokens <- strsplit(eth[keep], ",", fixed = TRUE)
+  has_token <- vapply(tokens, function(xs) {
+    if (length(xs) == 0) return(FALSE)
+    any(trimws(xs) == token)
+  }, logical(1))
+  tibble(participant_id = pids,
+         european_descent = as.numeric(has_token))
 }
 
 # Build one between-group Welch t-test row, given the per-subject amplitude
@@ -324,9 +384,30 @@ evaluate_hypotheses <- function(anova_tbl, posthoc) {
 # ---------------------------------------------------------------------------
 # Report builders
 # ---------------------------------------------------------------------------
-render_markdown <- function(per_cluster, sample_info, out_path) {
-  lines <- c(
-    "# Main Analysis Report", "",
+render_markdown <- function(per_cluster, sample_info, out_path,
+                            filter_info = NULL, covariate_info = NULL) {
+  title <- if (!is.null(covariate_info)) {
+    "# Main Analysis Report (sensitivity: European-descent covariate)"
+  } else if (!is.null(filter_info)) {
+    sprintf("# Main Analysis Report (sensitivity: %s ethnicity)", filter_info$token)
+  } else {
+    "# Main Analysis Report"
+  }
+  lines <- c(title, "")
+  if (!is.null(covariate_info)) {
+    n_dropped <- covariate_info$n_before - covariate_info$n_after
+    lines <- c(lines, sprintf(
+      "_Sensitivity analysis: full post-QC sample retained, with a binary indicator of **%s** descent (1 = at least one parent or grandparent listed as %s in the `ethnicity` field; 0 = none) included as a between-subjects nuisance covariate. n = %d after dropping %d participant(s) with NA ethnicity (%s-descent n = %d; other n = %d)._",
+      covariate_info$token, covariate_info$token,
+      covariate_info$n_after, n_dropped,
+      covariate_info$token,
+      covariate_info$n_european, covariate_info$n_non_european), "")
+  } else if (!is.null(filter_info)) {
+    lines <- c(lines, sprintf(
+      "_Sensitivity analysis: restricted to participants with at least one grandparent born in **%s** (%d of %d participants retained)._",
+      filter_info$token, filter_info$n_after, filter_info$n_before), "")
+  }
+  lines <- c(lines,
     "## Sample", "",
     sprintf("- Analytic sample (post-QC): **%d** participants (Lonely n = %d; Non-Lonely n = %d).",
             sample_info$n_total, sample_info$n_lonely, sample_info$n_nonlonely),
@@ -357,6 +438,14 @@ render_markdown <- function(per_cluster, sample_info, out_path) {
                                 fmt_num(r$F, 2), fmt_p(r$p_unc, 3),
                                 fmt_eta2(r$pes),
                                 if (isTRUE(r$significant_at_cluster_alpha)) "**yes**" else "no"))
+    }
+    if (!is.null(cl$covariate_row)) {
+      cr <- cl$covariate_row
+      lines <- c(lines, "",
+                 sprintf("_Nuisance covariate (european_descent): F(%s, %s) = %s, p = %s, partial eta^2 = %s._",
+                         fmt_num(cr$df1, 0), fmt_num(cr$df2, 0),
+                         fmt_num(cr$F, 2), fmt_p(cr$p_unc, 3),
+                         fmt_eta2(cr$pes)))
     }
     if (!is.null(cl$posthoc$tests)) {
       lines <- c(lines, "",
@@ -442,6 +531,12 @@ render_markdown <- function(per_cluster, sample_info, out_path) {
 
   lines <- c(lines, "## Methods", "",
              "- Filter: passed QC (>= 50 epochs per angry/happy x rep 1/5; <= 4 bad channels; `exclude != TRUE`; valid group).",
+             if (!is.null(filter_info)) sprintf(
+               "- Sensitivity restriction: only participants whose `ethnicity` field in `participants.tsv` lists `%s` as one of the grandparents' continents of birth (%d of %d retained).",
+               filter_info$token, filter_info$n_after, filter_info$n_before) else NULL,
+             if (!is.null(covariate_info)) sprintf(
+               "- Sensitivity covariate (ANCOVA): full post-QC sample retained (NA-ethnicity participants dropped, n = %d of %d). A binary indicator (1 if `ethnicity` in `participants.tsv` lists `%s` as a parent/grandparent continent of birth, 0 otherwise) is included as a between-subjects nuisance covariate via the `covariate` argument of `afex::aov_ez`. Its variance is partialled out of the between-subjects error stratum; the covariate's own main-effect F is reported per cluster as a note below each ANOVA table.",
+               covariate_info$n_after, covariate_info$n_before, covariate_info$token) else NULL,
              "- Per-cluster mean ERP amplitudes were extracted in Python (`5_extract_amplitudes.py`) and supplied as a long-format TSV.",
              "- 3-way mixed ANOVA via `afex::aov_ez` (Type III SS; classical multi-stratum error terms; partial eta-squared as effect size).",
              "- Pre-registered post-hoc Welch t-tests: a significant 3-way interaction is decomposed into the two pre-registered Lonely vs Non-Lonely comparisons at angry x rep 1 (H1) and angry x rep 5 (H2). When the 3-way is not significant, exploratory follow-ups may still be reported for a significant 2-way interaction with group (one between-group test per level of the within factor) or a significant group main effect (one overall comparison on subject-mean amplitudes); these are not part of the H1/H2 confirmation criteria.",
@@ -453,7 +548,8 @@ render_markdown <- function(per_cluster, sample_info, out_path) {
   writeLines(lines, out_path)
 }
 
-render_table_tex <- function(per_cluster, out_path) {
+render_table_tex <- function(per_cluster, out_path,
+                             filter_info = NULL, covariate_info = NULL) {
   # APA-style ANOVA table: italicised statistic letters in the header, a single
   # combined `df` column (df_num, df_den), no separate Sig. column (asterisks
   # mark significant rows), and a Note. below the table explaining the markers
@@ -477,8 +573,18 @@ render_table_tex <- function(per_cluster, out_path) {
            ">{\\centering\\arraybackslash}p{1.4cm}",
            ">{\\centering\\arraybackslash}p{2.4cm}",
            ">{\\centering\\arraybackslash}p{1.2cm}@{}}"),
-    sprintf("\\caption{3-way mixed ANOVA (emotion $\\times$ repetition $\\times$ group) per spatiotemporal cluster. Effects are evaluated at $\\alpha<%.2f$ per term.} \\\\",
-            ALPHA_CLUSTER),
+    sprintf("\\caption{3-way mixed ANOVA (emotion $\\times$ repetition $\\times$ group) per spatiotemporal cluster. Effects are evaluated at $\\alpha<%.2f$ per term.%s} \\\\",
+            ALPHA_CLUSTER,
+            if (!is.null(covariate_info)) sprintf(
+              " Sensitivity analysis: full post-QC sample retained (n = %d after dropping %d NA-ethnicity participant(s); %s-descent n = %d, other n = %d); a binary %s-descent indicator was included as a between-subjects nuisance covariate via \\texttt{afex::aov\\_ez}.",
+              covariate_info$n_after,
+              covariate_info$n_before - covariate_info$n_after,
+              covariate_info$token,
+              covariate_info$n_european, covariate_info$n_non_european,
+              covariate_info$token)
+            else if (!is.null(filter_info)) sprintf(
+              " Sensitivity analysis: restricted to participants with at least one grandparent born in %s (%d of %d participants retained).",
+              filter_info$token, filter_info$n_after, filter_info$n_before) else ""),
     "\\label{tab:main_analysis} \\\\",
     "\\toprule",
     "\\textbf{Source} & \\textit{df} & \\textit{F} & \\textit{p} & $\\eta^{2}_{p}$ \\\\",
@@ -511,8 +617,32 @@ render_table_tex <- function(per_cluster, out_path) {
   writeLines(lines, out_path)
 }
 
-render_prose_tex <- function(per_cluster, sample_info, out_path) {
-  lines <- c(sprintf(
+render_prose_tex <- function(per_cluster, sample_info, out_path,
+                             filter_info = NULL, covariate_info = NULL) {
+  preface <- if (!is.null(covariate_info)) sprintf(
+    paste0("This sensitivity analysis re-fits the main mixed ANOVA on the ",
+           "full post-QC sample (%d of %d participants; %d dropped for ",
+           "missing ethnicity), including a binary indicator of %s descent ",
+           "(coded 1 when the \\texttt{ethnicity} field of ",
+           "\\texttt{participants.tsv} lists %s among the parent/grandparent ",
+           "continents of birth, and 0 otherwise; %s-descent ",
+           "$n=%d$, other $n=%d$) as a between-subjects nuisance ",
+           "covariate via the \\texttt{covariate} argument of ",
+           "\\texttt{afex::aov\\_ez}, partialling its variance out of the ",
+           "between-subjects error stratum. "),
+    covariate_info$n_after, covariate_info$n_before,
+    covariate_info$n_before - covariate_info$n_after,
+    covariate_info$token, covariate_info$token, covariate_info$token,
+    covariate_info$n_european, covariate_info$n_non_european)
+  else if (!is.null(filter_info)) sprintf(
+    paste0("This sensitivity analysis was restricted to the %d participants ",
+           "whose self-reported grandparent continent of birth included %s ",
+           "(\\texttt{ethnicity} field of \\texttt{participants.tsv}; ",
+           "%d of %d post-QC participants retained). "),
+    sample_info$n_total, filter_info$token,
+    filter_info$n_after, filter_info$n_before)
+  else ""
+  lines <- c(paste0(preface, sprintf(
     paste("Mean event-related potential (ERP) amplitudes were averaged",
           "over the electrodes and time window of each pre-registered",
           "spatiotemporal cluster, yielding one amplitude per participant",
@@ -559,7 +689,7 @@ render_prose_tex <- function(per_cluster, sample_info, out_path) {
     ALPHA_CLUSTER,
     ALPHA_POSTHOC_BASE, ALPHA_POSTHOC_BASE,
     sample_info$n_total,
-    sample_info$n_lonely, sample_info$n_nonlonely))
+    sample_info$n_lonely, sample_info$n_nonlonely)))
 
   describe_anova <- function(cl) {
     sig_terms <- cl$anova[cl$anova$significant_at_cluster_alpha, ]
@@ -706,6 +836,53 @@ main <- function() {
                    show_col_types = FALSE)
   amps$repetition <- as.character(amps$repetition)
 
+  # Optional ethnicity-based sensitivity filter. When --ethnicity-filter is
+  # supplied, restrict the analytic sample to participants whose `ethnicity`
+  # field in participants.tsv contains the given continent token (e.g.
+  # "Europe"). All downstream computation sees the filtered `amps`, so the
+  # sample-size sentences and per-cluster ns reflect the restriction.
+  filter_info <- NULL
+  if (!is.null(args[["ethnicity-filter"]])) {
+    token <- args[["ethnicity-filter"]]
+    participants <- read_tsv(args[["participants-tsv"]], comment = "#",
+                             show_col_types = FALSE)
+    keep_ids <- filter_participants_by_ethnicity(participants, token)
+    n_before <- length(unique(amps$participant_id))
+    amps <- amps %>% filter(participant_id %in% keep_ids)
+    n_after <- length(unique(amps$participant_id))
+    cat("Ethnicity filter '", token, "': kept ", n_after, "/", n_before,
+        " participants\n", sep = "")
+    filter_info <- list(token = token, n_before = n_before, n_after = n_after)
+  }
+
+  # Optional ethnicity-based covariate-adjustment (ANCOVA) sensitivity.
+  # Unlike --ethnicity-filter, the full post-QC sample is retained; a
+  # binary European-descent indicator is joined onto amps and passed to
+  # afex::aov_ez as a between-subjects nuisance covariate. Participants with
+  # NA ethnicity are dropped (afex covariates do not tolerate NA).
+  covariate_info <- NULL
+  covariate_col <- NULL
+  if (!is.null(args[["ethnicity-covariate"]])) {
+    token <- args[["ethnicity-covariate"]]
+    participants <- read_tsv(args[["participants-tsv"]], comment = "#",
+                             show_col_types = FALSE)
+    cov_tbl <- binarise_ethnicity(participants, token)
+    n_before <- length(unique(amps$participant_id))
+    amps <- amps %>% inner_join(cov_tbl, by = "participant_id")
+    n_after <- length(unique(amps$participant_id))
+    cov_pid <- amps %>% distinct(participant_id, european_descent)
+    n_european <- sum(cov_pid$european_descent == 1)
+    n_non_european <- n_after - n_european
+    cat("Ethnicity covariate '", token, "': kept ", n_after, "/", n_before,
+        " (European-descent ", n_european, "; non-European ", n_non_european,
+        ")\n", sep = "")
+    covariate_info <- list(
+      token = token, n_before = n_before, n_after = n_after,
+      n_european = n_european, n_non_european = n_non_european
+    )
+    covariate_col <- "european_descent"
+  }
+
   subjects <- amps %>% distinct(participant_id, group)
   sample_info <- list(
     n_total = nrow(subjects),
@@ -730,7 +907,7 @@ main <- function() {
         group = factor(group, levels = c("Lonely", "Non-Lonely")),
         participant_id = factor(participant_id)
       )
-    anova_tbl <- fit_mixed_anova(d)
+    anova_tbl <- fit_mixed_anova(d, covariate_col = covariate_col)
     ph <- decompose_interactions(d, anova_tbl)
     hypotheses <- evaluate_hypotheses(anova_tbl, ph)
     desc_tbl <- d %>%
@@ -741,7 +918,8 @@ main <- function() {
     per_cluster[[length(per_cluster) + 1]] <- list(
       name = cn, n = length(keep_ids),
       anova = anova_tbl, posthoc = ph, hypotheses = hypotheses,
-      desc = desc_tbl
+      desc = desc_tbl,
+      covariate_row = attr(anova_tbl, "covariate_row")
     )
   }
 
@@ -750,11 +928,14 @@ main <- function() {
   out_table <- args[["out-table-tex"]]
   dir.create(dirname(out_report), recursive = TRUE, showWarnings = FALSE)
 
-  render_markdown(per_cluster, sample_info, out_report)
+  render_markdown(per_cluster, sample_info, out_report,
+                  filter_info = filter_info, covariate_info = covariate_info)
   cat("Wrote ", out_report, "\n", sep = "")
-  render_table_tex(per_cluster, out_table)
+  render_table_tex(per_cluster, out_table,
+                   filter_info = filter_info, covariate_info = covariate_info)
   cat("Wrote ", out_table, "\n", sep = "")
-  render_prose_tex(per_cluster, sample_info, out_prose)
+  render_prose_tex(per_cluster, sample_info, out_prose,
+                   filter_info = filter_info, covariate_info = covariate_info)
   cat("Wrote ", out_prose, "\n", sep = "")
 }
 

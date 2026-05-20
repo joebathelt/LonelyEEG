@@ -230,6 +230,100 @@ test_that("complete_subjects drops participants missing cells entirely", functio
 })
 
 # ---------------------------------------------------------------------------
+# filter_participants_by_ethnicity (sensitivity analysis filter)
+# ---------------------------------------------------------------------------
+test_that("filter_participants_by_ethnicity keeps the single-token case", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02"),
+              ethnicity = c("Europe", "East Asia"))
+  expect_identical_(filter_participants_by_ethnicity(p, "Europe"), "sub-01")
+})
+
+test_that("filter_participants_by_ethnicity keeps Europe in a multi-entry list", function() {
+  p <- tibble(
+    participant_id = c("sub-01", "sub-02", "sub-03"),
+    ethnicity = c("South-East Asia, Europe",
+                  "Europe, North America",
+                  "East Asia, South-East Asia")
+  )
+  expect_identical_(filter_participants_by_ethnicity(p, "Europe"),
+                    c("sub-01", "sub-02"))
+})
+
+test_that("filter_participants_by_ethnicity does not substring-match (East Asia vs South-East Asia)", function() {
+  # Token-split matching: "East Asia" must NOT match "South-East Asia".
+  # Guards against a future filter token tripping over the hyphenated continent
+  # names in the source data.
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              ethnicity = c("East Asia", "South-East Asia",
+                            "East Asia, South-East Asia"))
+  expect_identical_(filter_participants_by_ethnicity(p, "East Asia"),
+                    c("sub-01", "sub-03"))
+})
+
+test_that("filter_participants_by_ethnicity drops NA ethnicity rows", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02"),
+              ethnicity = c(NA_character_, "Europe"))
+  expect_identical_(filter_participants_by_ethnicity(p, "Europe"), "sub-02")
+})
+
+test_that("filter_participants_by_ethnicity preserves input order", function() {
+  p <- tibble(
+    participant_id = c("sub-03", "sub-01", "sub-04", "sub-02"),
+    ethnicity = c("Europe", "East Asia", "Europe, North America", "Europe")
+  )
+  expect_identical_(filter_participants_by_ethnicity(p, "Europe"),
+                    c("sub-03", "sub-04", "sub-02"))
+})
+
+# ---------------------------------------------------------------------------
+# binarise_ethnicity (covariate-adjusted sensitivity analysis)
+# ---------------------------------------------------------------------------
+test_that("binarise_ethnicity codes single Europe token as 1", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02"),
+              ethnicity = c("Europe", "East Asia"))
+  r <- binarise_ethnicity(p, "Europe")
+  expect_identical_(r$participant_id, c("sub-01", "sub-02"))
+  expect_equal_(r$european_descent, c(1, 0))
+})
+
+test_that("binarise_ethnicity codes multi-token list containing Europe as 1", function() {
+  p <- tibble(
+    participant_id = c("sub-01", "sub-02", "sub-03"),
+    ethnicity = c("South-East Asia, Europe",
+                  "Europe, North America",
+                  "East Asia, South-East Asia")
+  )
+  r <- binarise_ethnicity(p, "Europe")
+  expect_equal_(r$european_descent, c(1, 1, 0))
+})
+
+test_that("binarise_ethnicity drops NA-ethnicity rows from the output", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              ethnicity = c("Europe", NA_character_, "East Asia"))
+  r <- binarise_ethnicity(p, "Europe")
+  expect_identical_(r$participant_id, c("sub-01", "sub-03"))
+  expect_equal_(r$european_descent, c(1, 0))
+})
+
+test_that("binarise_ethnicity does not substring-match (South-East Asia vs East Asia)", function() {
+  # Token-split matching: "East Asia" must not pick up "South-East Asia".
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              ethnicity = c("East Asia", "South-East Asia",
+                            "East Asia, South-East Asia"))
+  r <- binarise_ethnicity(p, "East Asia")
+  expect_equal_(r$european_descent, c(1, 0, 1))
+})
+
+test_that("binarise_ethnicity returns numeric (afex covariate requirement)", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02"),
+              ethnicity = c("Europe", "East Asia"))
+  r <- binarise_ethnicity(p, "Europe")
+  expect_true_(is.numeric(r$european_descent))
+  expect_true_(!is.logical(r$european_descent))
+  expect_true_(!is.integer(r$european_descent))
+})
+
+# ---------------------------------------------------------------------------
 # welch_row
 # ---------------------------------------------------------------------------
 test_that("welch_row returns a 1-row tibble with the expected columns", function() {
@@ -402,6 +496,84 @@ test_that("fit_mixed_anova does not flag spurious effects under a single injecti
     if (!(p_for(tbl, src) > 0.05))
       stop(sprintf("spurious effect at %s: p = %.4f", src, p_for(tbl, src)))
   }
+})
+
+# ---------------------------------------------------------------------------
+# fit_mixed_anova with covariate (ANCOVA sensitivity)
+# ---------------------------------------------------------------------------
+# Attach a per-subject european_descent indicator to a simulated long dataset.
+# `p_lonely` / `p_nonlonely` control the proportion of European-descent
+# subjects in each group; setting them unequal creates a confound that the
+# covariate can absorb. `effect_on_amp` is the additive shift in amplitude
+# applied to European-descent subjects.
+attach_european_descent <- function(d, p_lonely = 0.5, p_nonlonely = 0.5,
+                                     effect_on_amp = 0, seed = 401) {
+  subjects <- d %>% distinct(participant_id, group)
+  set.seed(seed)
+  subjects$european_descent <- as.numeric(ifelse(
+    subjects$group == "Lonely",
+    rbinom(nrow(subjects), 1, p_lonely),
+    rbinom(nrow(subjects), 1, p_nonlonely)
+  ))
+  out <- d %>% left_join(subjects, by = c("participant_id", "group"))
+  out$amplitude <- out$amplitude + effect_on_amp * out$european_descent
+  out
+}
+
+test_that("fit_mixed_anova with covariate_col=NULL is identical to default call", function() {
+  d <- simulate_long(n_per_group = 16, group_effect = 1.0, seed = 301)
+  a <- fit_mixed_anova(d)
+  b <- fit_mixed_anova(d, covariate_col = NULL)
+  # Drop the covariate_row attribute (NULL on b) before comparing; tibble
+  # body must be identical.
+  attr(b, "covariate_row") <- NULL
+  expect_identical_(a, b)
+})
+
+test_that("fit_mixed_anova with covariate preserves the 7-row schema", function() {
+  d <- attach_european_descent(simulate_long(n_per_group = 16, seed = 302),
+                                p_lonely = 0.6, p_nonlonely = 0.4, seed = 302)
+  tbl <- fit_mixed_anova(d, covariate_col = "european_descent")
+  expect_identical_(colnames(tbl),
+                    c("Source", "df1", "df2", "F", "p_unc", "pes",
+                      "p_bonf", "significant_at_cluster_alpha"))
+  expect_identical_(tbl$Source,
+                    c("group", "emotion", "repetition",
+                      "emotion x group", "repetition x group",
+                      "emotion x repetition", "emotion x repetition x group"))
+  expect_equal_(nrow(tbl), 7)
+})
+
+test_that("fit_mixed_anova exposes the covariate's main-effect row as an attribute", function() {
+  d <- attach_european_descent(simulate_long(n_per_group = 16, seed = 303),
+                                p_lonely = 0.6, p_nonlonely = 0.4,
+                                effect_on_amp = 1.5, seed = 303)
+  tbl <- fit_mixed_anova(d, covariate_col = "european_descent")
+  cr <- attr(tbl, "covariate_row")
+  if (is.null(cr)) stop("covariate_row attribute missing")
+  expect_identical_(cr$Source, "european_descent")
+  expect_true_(is.finite(cr$F))
+  expect_true_(is.finite(cr$p_unc))
+})
+
+test_that("fit_mixed_anova covariate de-confounds a spurious group effect", function() {
+  # True group_effect = 0; european_descent is strongly confounded with group
+  # (80% in Lonely vs 20% in Non-Lonely) AND drives amplitude. The unadjusted
+  # ANOVA sees a spuriously inflated group effect; adjusting for the covariate
+  # should reveal that the apparent group difference was mediated by ethnicity.
+  d <- attach_european_descent(simulate_long(n_per_group = 30,
+                                              group_effect = 0, seed = 401),
+                                p_lonely = 0.8, p_nonlonely = 0.2,
+                                effect_on_amp = 1.5, seed = 401)
+  tbl_base <- fit_mixed_anova(d)
+  tbl_adj  <- fit_mixed_anova(d, covariate_col = "european_descent")
+  cr <- attr(tbl_adj, "covariate_row")
+  expect_true_(cr$F > 5)  # covariate explains substantial variance
+  f_base <- tbl_base$F[tbl_base$Source == "group"]
+  f_adj  <- tbl_adj$F[tbl_adj$Source == "group"]
+  if (!(f_adj < f_base))
+    stop(sprintf("expected adjusted group F < unadjusted: F_base=%.2f, F_adj=%.2f",
+                 f_base, f_adj))
 })
 
 # ---------------------------------------------------------------------------
@@ -750,6 +922,60 @@ test_that("render_prose_tex marks H1 and H2 as confirmed when criteria are met",
   body <- paste(readLines(tmp), collapse = "\n")
   expect_match_(body, "H1 \\(first presentation of angry faces\\) was confirmed")
   expect_match_(body, "H2 \\(fifth presentation of angry faces\\) was confirmed")
+})
+
+# Synthetic per-cluster list that also carries a covariate_row (i.e. mimics
+# what main() builds when --ethnicity-covariate is supplied).
+fake_per_cluster_with_covariate <- function() {
+  per <- fake_per_cluster()
+  per[[1]]$covariate_row <- tibble(
+    Source = "european_descent",
+    df1 = 1, df2 = 38,
+    F = 4.20, p_unc = 0.047, pes = 0.10,
+    p_bonf = 0.141, significant_at_cluster_alpha = FALSE
+  )
+  per
+}
+
+test_that("render_markdown covariate variant: title and preface name the covariate", function() {
+  tmp <- tempfile(fileext = ".md")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_covariate()
+  sample_info <- list(n_total = 39, n_lonely = 19, n_nonlonely = 20)
+  covariate_info <- list(token = "Europe", n_before = 42, n_after = 39,
+                         n_european = 24, n_non_european = 15)
+  render_markdown(per, sample_info, tmp, covariate_info = covariate_info)
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "European-descent covariate")
+  expect_match_(body, "nuisance covariate")
+  expect_match_(body, "Europe-descent n = 24")
+  expect_match_(body, "Nuisance covariate \\(european_descent\\)")
+})
+
+test_that("render_table_tex covariate variant: caption mentions the covariate", function() {
+  tmp <- tempfile(fileext = ".tex")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_covariate()
+  covariate_info <- list(token = "Europe", n_before = 42, n_after = 39,
+                         n_european = 24, n_non_european = 15)
+  render_table_tex(per, tmp, covariate_info = covariate_info)
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "nuisance covariate")
+  expect_match_(body, "Europe-descent n = 24")
+})
+
+test_that("render_prose_tex covariate variant: preface describes the ANCOVA setup", function() {
+  tmp <- tempfile(fileext = ".tex")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_covariate()
+  sample_info <- list(n_total = 39, n_lonely = 19, n_nonlonely = 20)
+  covariate_info <- list(token = "Europe", n_before = 42, n_after = 39,
+                         n_european = 24, n_non_european = 15)
+  render_prose_tex(per, sample_info, tmp, covariate_info = covariate_info)
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "nuisance covariate")
+  expect_match_(body, "indicator of Europe descent")
+  expect_match_(body, "Europe-descent \\$n=24\\$")
 })
 
 # ---------------------------------------------------------------------------

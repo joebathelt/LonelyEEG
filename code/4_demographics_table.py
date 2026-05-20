@@ -23,6 +23,8 @@ CONTINUOUS_MH = [
     'gad7_total', 'pss10_total', 'phq9_total',
     'lsns6_total',
     'bsi53_gsi',
+]
+CONTINUOUS_BSI = [
     'bsi53_somatisation', 'bsi53_obsessive_compulsive',
     'bsi53_interpersonal_sensitivity', 'bsi53_depression',
     'bsi53_anxiety', 'bsi53_hostility',
@@ -80,7 +82,7 @@ def load_and_filter(participants_tsv, qc_tsv):
     qc = pd.read_csv(qc_tsv, sep='\t', na_values=['n/a'])
 
     numeric_cols = (
-        CONTINUOUS_DEMO + CONTINUOUS_QC + CONTINUOUS_MH + ['ucla-ls']
+        CONTINUOUS_DEMO + CONTINUOUS_QC + CONTINUOUS_MH + CONTINUOUS_BSI + ['ucla-ls']
     )
     for col in numeric_cols:
         if col in participants.columns:
@@ -556,29 +558,41 @@ def build_rows(df, exclusion_df):
     for var in CONTINUOUS_MH:
         add_continuous(var)
 
+    section('BSI-53 subscales')
+    for var in CONTINUOUS_BSI:
+        add_continuous(var)
+
     return rows, footnotes
 
 
 MH_SECTION_LABEL = 'Mental-health questionnaires'
+BSI_SECTION_LABEL = 'BSI-53 subscales'
 
 
 def split_rows_by_table(rows, footnotes):
-    """Partition rows + footnotes into the demographics and mental-health tables.
+    """Partition rows + footnotes into the demographics, mental-health, and
+    BSI-53 subscale tables.
 
-    The mental-health section header is dropped: the standalone MH table needs
-    no internal divider.
+    The mental-health and BSI-53 section headers are dropped: each standalone
+    table needs no internal divider.
     """
-    demo_rows, mh_rows = [], []
+    demo_rows, mh_rows, bsi_rows = [], [], []
     target = demo_rows
     for row in rows:
         if row['kind'] == 'section' and row['label'] == MH_SECTION_LABEL:
             target = mh_rows
             continue
+        if row['kind'] == 'section' and row['label'] == BSI_SECTION_LABEL:
+            target = bsi_rows
+            continue
         target.append(row)
 
     demo_footnotes = {k: v for k, v in footnotes.items() if k == 'a'}
     mh_footnotes = {k: v for k, v in footnotes.items() if k == 'b'}
-    return demo_rows, demo_footnotes, mh_rows, mh_footnotes
+    bsi_footnotes = {}
+    return (demo_rows, demo_footnotes,
+            mh_rows, mh_footnotes,
+            bsi_rows, bsi_footnotes)
 
 
 # ---------------------------------------------------------------------------
@@ -756,6 +770,13 @@ MH_CAPTION = (
     r"Cohen's $d$ (pooled SD) as the effect size."
 )
 
+BSI_CAPTION = (
+    r'BSI-53 subscale scores by loneliness group. '
+    r'Values are mean (SE) [min--max]. '
+    r"Group comparisons use Welch-corrected independent $t$-tests, with "
+    r"Cohen's $d$ (pooled SD) as the effect size."
+)
+
 
 def escape_latex(text):
     if text is None:
@@ -782,24 +803,28 @@ def escape_latex(text):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(participants_tsv, qc_tsv, out_tex, out_tsv, out_mh_tex, out_mh_tsv):
+def main(participants_tsv, qc_tsv, out_tex, out_tsv,
+         out_mh_tex, out_mh_tsv, out_bsi_tex, out_bsi_tsv):
     participants_tsv = Path(participants_tsv)
     qc_tsv = Path(qc_tsv)
     out_tex = Path(out_tex)
     out_tsv = Path(out_tsv)
     out_mh_tex = Path(out_mh_tex)
     out_mh_tsv = Path(out_mh_tsv)
+    out_bsi_tex = Path(out_bsi_tex)
+    out_bsi_tsv = Path(out_bsi_tsv)
 
     print(f'Loading {participants_tsv} and {qc_tsv}')
     df, drop_log, exclusion_df = load_and_filter(participants_tsv, qc_tsv)
     print(f'Filter trace: {drop_log}')
 
     rows, footnotes = build_rows(df, exclusion_df)
-    demo_rows, demo_footnotes, mh_rows, mh_footnotes = split_rows_by_table(
-        rows, footnotes,
-    )
+    (demo_rows, demo_footnotes,
+     mh_rows, mh_footnotes,
+     bsi_rows, bsi_footnotes) = split_rows_by_table(rows, footnotes)
 
-    for path in (out_tex, out_tsv, out_mh_tex, out_mh_tsv):
+    for path in (out_tex, out_tsv, out_mh_tex, out_mh_tsv,
+                 out_bsi_tex, out_bsi_tsv):
         path.parent.mkdir(parents=True, exist_ok=True)
 
     render_tsv(demo_rows, df, drop_log, demo_footnotes, out_tsv)
@@ -818,6 +843,14 @@ def main(participants_tsv, qc_tsv, out_tex, out_tsv, out_mh_tex, out_mh_tsv):
     )
     print(f'Wrote {out_mh_tex}')
 
+    render_tsv(bsi_rows, df, drop_log, bsi_footnotes, out_bsi_tsv)
+    print(f'Wrote {out_bsi_tsv}')
+    render_latex(
+        bsi_rows, df, drop_log, bsi_footnotes,
+        BSI_CAPTION, 'tab:bsi_subscales', out_bsi_tex,
+    )
+    print(f'Wrote {out_bsi_tex}')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -834,9 +867,14 @@ if __name__ == '__main__':
                         help='Output LaTeX path for the mental-health questionnaires table.')
     parser.add_argument('--out-mh-tsv', required=True, type=Path,
                         help='Output TSV path for the mental-health questionnaires table.')
+    parser.add_argument('--out-bsi-tex', required=True, type=Path,
+                        help='Output LaTeX path for the BSI-53 subscale table (supplementary).')
+    parser.add_argument('--out-bsi-tsv', required=True, type=Path,
+                        help='Output TSV path for the BSI-53 subscale table (supplementary).')
     args = parser.parse_args()
     main(args.participants_tsv, args.qc_tsv,
          args.out_tex, args.out_tsv,
-         args.out_mh_tex, args.out_mh_tsv)
+         args.out_mh_tex, args.out_mh_tsv,
+         args.out_bsi_tex, args.out_bsi_tsv)
 
 # %%
