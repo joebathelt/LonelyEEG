@@ -33,10 +33,10 @@ from scipy.signal import butter, filtfilt
 # ---------------------------------------------------------------------------
 
 GROUP_COLORS = {
-    'Non-Lonely': '#D55E00',       # vermillion (Okabe-Ito)
-    'Lonely': '#0072B2',   # blue       (Okabe-Ito)
+    'Non-Lonely': '#A4002A99',       # Lancet red
+    'Lonely': '#00468B99',   # Lancet blue
 }
-WINDOW_FACECOLOR = '#DDDDDD'
+WINDOW_FACECOLOR = '#D3D3D3'  # Light grey, alpha applied separately for visibility
 WINDOW_ALPHA = 0.55
 
 # Display-only low-pass filter for ERP traces (zero-phase Butterworth).
@@ -140,11 +140,14 @@ def plot_erp_panel(ax, waves, cluster_name, column_key):
             s = display_lowpass(stats['sem'].to_numpy(), t)
             color = GROUP_COLORS[grp]
             ls = cfg['linestyles'][level]
-            ax.fill_between(t, m - s, m + s, color=color, alpha=0.18,
-                            lw=0, zorder=2)
+            ax.fill_between(t, m - s, m + s, color=color, alpha=0.3,
+                            lw=0, zorder=-1)
             ax.plot(t, m, color=color, linestyle=ls, lw=1.1, zorder=3)
 
     ax.set_xlim(-100, 1000)
+    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(100))
+    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(1))
+    ax.grid(True, which='major', color='0.8', lw=0.4, zorder=0.5)
     ax.tick_params(axis='both', labelsize=7, length=2, pad=1)
     ax.spines[['top', 'right']].set_visible(False)
 
@@ -280,7 +283,8 @@ def build_figure(waves, amps, chans):
             plot_erp_panel(ax, waves, cname, col_key)
             ax.set_ylim(y_lo, y_hi)
 
-            plot_topomap_inset(ax, chans, cluster_index=r + 1)
+            if c == 0:
+                plot_topomap_inset(ax, chans, cluster_index=r + 1)
             plot_raincloud_inset(ax, amps, cname, col_key)
 
             if r == 0:

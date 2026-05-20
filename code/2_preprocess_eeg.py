@@ -12,12 +12,14 @@ for _var in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
     os.environ.setdefault(_var, str(_DEFAULT_JOBS_PER_RUN))
 
 import autoreject
+import contextlib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import pandas as pd
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import time
@@ -84,6 +86,7 @@ def add_preprocessing_summary(report, epochs_original, epochs_final,
 EPOCH_TMIN = -0.1
 EPOCH_TMAX = 1.0
 RESAMPLE_SFREQ = 250
+LOG_DIR = Path(__file__).resolve().parent.parent / 'logs'
 
 
 def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
@@ -95,16 +98,17 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
     print_timestamp('Reading raw data')
     raw = mne.io.read_raw_bdf(in_file, preload=True)
 
-    # Crop continuous data to the experiment window: from the start marker
-    # (event 111) to the end marker (event 101). Anything outside this range
-    # is pre-/post-experiment and shouldn't enter preprocessing.
-    print_timestamp('Cropping data to experiment window (events 111 → 101)')
+    # Crop continuous data to the experiment window: from the first stimulus
+    # event (code 20, marking the start of the first trial) to the end marker
+    # (event 101). Anything outside this range is pre-/post-experiment and
+    # shouldn't enter preprocessing.
+    print_timestamp('Cropping data to experiment window (first event 20 → 101)')
     all_events = mne.find_events(raw, min_duration=0.01, output='onset')
     sfreq = raw.info['sfreq']
 
-    start_events = all_events[all_events[:, 2] == 111]
+    start_events = all_events[all_events[:, 2] == 20]
     end_events = all_events[all_events[:, 2] == 101]
-    print(f'  found {len(start_events)} event(s) 111 (task start), '
+    print(f'  found {len(start_events)} event(s) 20 (first one marks task start), '
           f'{len(end_events)} event(s) 101 (task end), '
           f'recording duration = {raw.times[-1]:.1f}s')
 
@@ -113,7 +117,7 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
     if len(start_events) > 0:
         tmin = (start_events[0, 0] - raw.first_samp) / sfreq
     else:
-        print('  WARNING: event 111 not found — keeping recording start')
+        print('  WARNING: event 20 not found — keeping recording start')
     if len(end_events) > 0:
         tmax = (end_events[0, 0] - raw.first_samp) / sfreq
     else:
@@ -243,8 +247,6 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
         eog_average = None
         eog_components = []
         eog_scores = None
-        filtered.info["bads"] = sorted(set(filtered.info["bads"]) |
-                                       {'hEOG-01', 'hEOG-02', 'vEOG-01', 'vEOG-02'})
 
     try: 
         ecg_average = mne.preprocessing.create_ecg_epochs(filtered).average()
@@ -255,7 +257,6 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
         ecg_average = None
         ecg_components = []
         ecg_scores = None
-        filtered.info["bads"] = sorted(set(filtered.info["bads"]) | {'ECG1', 'ECG2'})
 
     report.add_ica(
         ica=ica,
@@ -302,7 +303,6 @@ def preprocess_EEG(in_file, out_folder, out_file, report_file, channel_config,
                         tmax=EPOCH_TMAX,
                         event_id=event_dict,
                         preload=True)
-    epochs = epochs.shift_time(tshift=0.025)
     report.add_epochs(epochs=epochs, title='Epochs')
     report.save(report_file, open_browser=False, overwrite=True)
 
@@ -465,16 +465,29 @@ def _process_subject(subject, in_folder, channel_config, n_jobs):
     out_folder = in_folder / f'derivatives/{subject}/eeg'
     out_file = out_folder / f'{subject}_task-RovingOddball_eeg-epo.fif.gz'
     report_file = out_folder / f'{subject}_task-RovingOddball_eeg.html'
+    log_file = LOG_DIR / f'{subject}_task-RovingOddball_preprocess.log'
 
     if os.path.isfile(out_file):
         return subject, 'skipped (already processed)'
-    try:
-        preprocess_EEG(in_file, out_folder, out_file, report_file,
-                       channel_config, channels_tsv=channels_tsv,
-                       n_jobs=n_jobs)
-        return subject, 'done'
-    except Exception as exc:
-        return subject, f'error: {exc!r}'
+
+    # Per-subject log under the repo-level logs/ folder: each worker captures
+    # its own stdout/stderr plus MNE's logger output to a dedicated file, so
+    # parallel workers don't interleave.
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    status = 'done'
+    with open(log_file, 'w', buffering=1) as fh:
+        with contextlib.redirect_stdout(fh), contextlib.redirect_stderr(fh):
+            mne.set_log_file(fname=str(log_file), overwrite=False)
+            try:
+                preprocess_EEG(in_file, out_folder, out_file, report_file,
+                               channel_config, channels_tsv=channels_tsv,
+                               n_jobs=n_jobs)
+            except Exception as exc:
+                traceback.print_exc(file=fh)
+                status = f'error: {exc!r} (see {log_file})'
+            finally:
+                mne.set_log_file(fname=None)
+    return subject, status
 
 
 def main(channel_config, in_folder, jobs_per_run, parallel_subjects):
@@ -482,7 +495,7 @@ def main(channel_config, in_folder, jobs_per_run, parallel_subjects):
     channel_config = Path(channel_config)
 
     subject_list = sorted([subject for subject in os.listdir(in_folder) if subject.startswith('sub-')])
-
+    
     with ProcessPoolExecutor(max_workers=parallel_subjects) as pool:
         futures = {
             pool.submit(_process_subject, subject, in_folder, channel_config,

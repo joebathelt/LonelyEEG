@@ -229,8 +229,8 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
 
     if all_present:
         print(f'  All BIDS files already present for {anon_id} ({orig_id}), skipping conversion')
-        if anonymize_bdf_patient_id(bdf_dst, orig_id, anon_id):
-            print(f'  Anonymized patient ID in {bdf_dst.name}')
+        if anonymize_bdf_header(bdf_dst, anon_id):
+            print(f'  Anonymized BDF header in {bdf_dst.name}')
         archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
         return
 
@@ -252,8 +252,8 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
     else:
         copyfile(src, bdf_dst)
 
-    if anonymize_bdf_patient_id(bdf_dst, orig_id, anon_id):
-        print(f'  Anonymized patient ID in {bdf_dst.name}')
+    if anonymize_bdf_header(bdf_dst, anon_id):
+        print(f'  Anonymized BDF header in {bdf_dst.name}')
 
     # Read raw once if any of events/channels/json need to be written
     needs_raw = not (events_dst.exists() and channels_dst.exists() and json_dst.exists())
@@ -336,20 +336,34 @@ def process_participant(orig_id, anon_id, raw_data_folder, outfolder,
     archive_raw_to_sourcedata(raw_subject_folder, sourcedata_folder / orig_id)
 
 
-def anonymize_bdf_patient_id(bdf_path, orig_id, anon_id):
-    """Replace orig_id with anon_id in the BDF local patient identification
-    field (header bytes 8–87). MNE parses this field into
-    raw.info['subject_info'], so updating it here keeps the anonymized ID
-    in the BIDS copy. Returns True if a replacement was made.
+def anonymize_bdf_header(bdf_path, anon_id):
+    """Scrub identifying info from the BDF header in place.
+
+    - Patient identification (bytes 8–87): replaced with anon_id
+    - Recording identification (bytes 88–167): blanked
+    - Start date/time (bytes 168–183): set to the value raw.anonymize()
+      produces (2000-01-01 00:00:00 in MNE 1.x). Participants often
+      encode dates in their original ID (initials+DDMMYY), so the
+      recording timestamp is still identifying after the ID is scrubbed.
+
+    Returns True if the file was modified.
     """
+    raw = mne.io.read_raw_bdf(bdf_path, preload=False, verbose='ERROR')
+    raw.anonymize()
+    anon_dt = raw.info['meas_date']
+    new_date = anon_dt.strftime('%d.%m.%y').encode('ascii')
+    new_time = anon_dt.strftime('%H.%M.%S').encode('ascii')
+
+    new_block = (anon_id.ljust(80)[:80].encode('ascii')
+                 + b' ' * 80
+                 + new_date
+                 + new_time)
     with open(bdf_path, 'r+b') as f:
         f.seek(8)
-        patient_field = f.read(80).decode('ascii', errors='replace')
-        if orig_id not in patient_field:
+        if f.read(len(new_block)) == new_block:
             return False
-        new_field = patient_field.replace(orig_id, anon_id).ljust(80)[:80]
         f.seek(8)
-        f.write(new_field.encode('ascii'))
+        f.write(new_block)
         return True
 
 

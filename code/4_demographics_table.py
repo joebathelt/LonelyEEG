@@ -237,13 +237,13 @@ def _test_contingency(table_array):
                     'p': float(res.pvalue),
                     'effect': v, 'effect_label': 'V'}
         except Exception as exc:
-            chi = stats.chi2_contingency(table_array)
+            chi = stats.chi2_contingency(table_array, correction=False)
             return {'test': 'chi2 (small cells)',
                     'statistic': float(chi.statistic), 'df': int(chi.dof),
                     'p': float(chi.pvalue),
                     'effect': v, 'effect_label': 'V',
                     'warning': f'Fisher failed ({exc}); used chi-square'}
-    chi = stats.chi2_contingency(table_array)
+    chi = stats.chi2_contingency(table_array, correction=False)
     return {'test': 'chi2', 'statistic': float(chi.statistic),
             'df': int(chi.dof), 'p': float(chi.pvalue),
             'effect': v, 'effect_label': 'V'}

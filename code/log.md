@@ -1,3 +1,6 @@
+2026-05-18:
+- Added an analysis of the image ratings
+
 2026-05-17:
 - Removed original IDs from the info field of the raw EEG files.
 - Adjusted the preprocessing to cut out time before the experiment start, after the end, and mark break segments. I also added a lower bound amplitude threshold to reject flat channels.

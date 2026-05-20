@@ -110,9 +110,9 @@ expect_length_ <- function(x, n) {
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
-test_that("fmt_p formats small p as '< .001'", function() {
-  expect_identical_(fmt_p(0.0001), "< .001")
-  expect_identical_(fmt_p(0.0005), "< .001")
+test_that("fmt_p reports small p in scientific notation", function() {
+  expect_identical_(fmt_p(0.0001), "1.00e-04")
+  expect_identical_(fmt_p(0.0005), "5.00e-04")
 })
 
 test_that("fmt_p drops leading zero", function() {
@@ -126,13 +126,14 @@ test_that("fmt_p returns 'n/a' for non-finite", function() {
   expect_identical_(fmt_p(Inf), "n/a")
 })
 
-test_that("fmt_p_apa wraps with italic p and uses '< .001' threshold", function() {
-  expect_identical_(fmt_p_apa(0.0001), "\\textit{p} < .001")
+test_that("fmt_p_apa wraps with italic p and uses scientific notation below .001", function() {
+  expect_identical_(fmt_p_apa(0.0001),
+                    "\\textit{p} = $1.00 \\times 10^{-4}$")
   expect_identical_(fmt_p_apa(0.04),   "\\textit{p} = .040")
 })
 
-test_that("fmt_p_tex emits LaTeX-friendly small-p", function() {
-  expect_identical_(fmt_p_tex(0.0001), "$<$ .001")
+test_that("fmt_p_tex emits LaTeX scientific notation for small p", function() {
+  expect_identical_(fmt_p_tex(0.0001), "$1.00 \\times 10^{-4}$")
   expect_identical_(fmt_p_tex(0.04),   ".040")
 })
 
@@ -309,7 +310,7 @@ test_that("fit_mixed_anova returns the expected schema and row order", function(
   tbl <- fit_mixed_anova(d)
   expect_identical_(colnames(tbl),
                     c("Source", "df1", "df2", "F", "p_unc", "pes",
-                      "p_bonf", "significant_at_alpha_0.02"))
+                      "p_bonf", "significant_at_cluster_alpha"))
   expect_identical_(tbl$Source,
                     c("group", "emotion", "repetition",
                       "emotion x group", "repetition x group",
@@ -323,7 +324,7 @@ test_that("fit_mixed_anova detects an injected between-group effect", function()
   grp <- tbl[tbl$Source == "group", ]
   expect_true_(grp$F > 5)
   expect_true_(grp$p_unc < 0.01)
-  expect_true_(grp$significant_at_alpha_0.02)
+  expect_true_(grp$significant_at_cluster_alpha)
 })
 
 test_that("fit_mixed_anova applies Bonferroni *3 to p_bonf", function() {
@@ -343,49 +344,49 @@ test_that("fit_mixed_anova detects emotion main effect", function() {
   d <- simulate_long(n_per_group = 20, emotion_effect = 1.5, seed = 101)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "emotion") < 0.001)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "emotion"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "emotion"])
 })
 
 test_that("fit_mixed_anova detects repetition main effect", function() {
   d <- simulate_long(n_per_group = 20, repetition_effect = 1.5, seed = 102)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "repetition") < 0.001)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "repetition"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "repetition"])
 })
 
 test_that("fit_mixed_anova detects group main effect", function() {
   d <- simulate_long(n_per_group = 20, group_effect = 2.0, seed = 103)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "group") < 0.01)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "group"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "group"])
 })
 
 test_that("fit_mixed_anova detects emotion x group interaction", function() {
   d <- simulate_long(n_per_group = 20, emotion_x_group = 2.0, seed = 104)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "emotion x group") < 0.001)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "emotion x group"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "emotion x group"])
 })
 
 test_that("fit_mixed_anova detects repetition x group interaction", function() {
   d <- simulate_long(n_per_group = 20, repetition_x_group = 2.0, seed = 105)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "repetition x group") < 0.001)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "repetition x group"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "repetition x group"])
 })
 
 test_that("fit_mixed_anova detects emotion x repetition interaction", function() {
   d <- simulate_long(n_per_group = 20, emotion_x_repetition = 1.5, seed = 106)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "emotion x repetition") < 0.001)
-  expect_true_(tbl$significant_at_alpha_0.02[tbl$Source == "emotion x repetition"])
+  expect_true_(tbl$significant_at_cluster_alpha[tbl$Source == "emotion x repetition"])
 })
 
 test_that("fit_mixed_anova detects 3-way emotion x repetition x group", function() {
   d <- simulate_long(n_per_group = 20, three_way = 3.0, seed = 107)
   tbl <- fit_mixed_anova(d)
   expect_true_(p_for(tbl, "emotion x repetition x group") < 0.01)
-  expect_true_(tbl$significant_at_alpha_0.02[
+  expect_true_(tbl$significant_at_cluster_alpha[
     tbl$Source == "emotion x repetition x group"])
 })
 
@@ -415,7 +416,7 @@ make_fake_anova_tbl <- function(sig_terms) {
     df1 = rep(1, 7), df2 = rep(20, 7),
     F = rep(1, 7), p_unc = rep(0.5, 7), pes = rep(0.01, 7),
     p_bonf = rep(1.0, 7),
-    significant_at_alpha_0.02 = sources %in% sig_terms
+    significant_at_cluster_alpha = sources %in% sig_terms
   )
 }
 
@@ -432,46 +433,49 @@ make_fake_long <- function(n_per_group = 4) {
   grid
 }
 
-test_that("decompose_interactions: 3-way sig -> 4 between-group tests, alpha = .0125", function() {
+test_that("decompose_interactions: 3-way sig -> 2 pre-registered angry-face tests (H1/H2), alpha = .01", function() {
   d <- make_fake_long()
   anova_tbl <- make_fake_anova_tbl("emotion x repetition x group")
   res <- decompose_interactions(d, anova_tbl)
-  expect_equal_(nrow(res$tests), 4)
-  expect_equal_(res$alpha, 0.05 / 4)
-  # All 4 emotion x repetition cells covered.
-  expect_match_(res$tests$comparison, "angry, rep 1")
-  expect_match_(res$tests$comparison, "angry, rep 5")
-  expect_match_(res$tests$comparison, "happy, rep 1")
-  expect_match_(res$tests$comparison, "happy, rep 5")
-  expect_identical_(res$rationale, "3-way (emotion x repetition x group)")
+  expect_equal_(nrow(res$tests), 2)
+  expect_equal_(res$alpha, 0.02 / 2)
+  # Only the two pre-registered angry cells are tested.
+  expect_match_(res$tests$comparison, "at angry, rep 1")
+  expect_match_(res$tests$comparison, "at angry, rep 5")
+  # Happy cells must NOT appear in the confirmatory family.
+  if (any(grepl("happy", res$tests$comparison)))
+    stop("happy-face cells leaked into the pre-registered post-hoc family")
+  expect_match_(res$rationale, "3-way \\(emotion x repetition x group\\)")
+  expect_match_(res$rationale, "H1")
+  expect_match_(res$rationale, "H2")
 })
 
-test_that("decompose_interactions: repetition x group sig -> 2 tests, one per repetition", function() {
+test_that("decompose_interactions: repetition x group sig -> 2 tests, one per repetition, alpha = .01", function() {
   d <- make_fake_long()
   anova_tbl <- make_fake_anova_tbl("repetition x group")
   res <- decompose_interactions(d, anova_tbl)
   expect_equal_(nrow(res$tests), 2)
-  expect_equal_(res$alpha, 0.05 / 2)
+  expect_equal_(res$alpha, 0.02 / 2)
   expect_match_(res$tests$comparison, "at rep 1")
   expect_match_(res$tests$comparison, "at rep 5")
 })
 
-test_that("decompose_interactions: emotion x group sig -> 2 tests, one per emotion", function() {
+test_that("decompose_interactions: emotion x group sig -> 2 tests, one per emotion, alpha = .01", function() {
   d <- make_fake_long()
   anova_tbl <- make_fake_anova_tbl("emotion x group")
   res <- decompose_interactions(d, anova_tbl)
   expect_equal_(nrow(res$tests), 2)
-  expect_equal_(res$alpha, 0.05 / 2)
+  expect_equal_(res$alpha, 0.02 / 2)
   expect_match_(res$tests$comparison, "at angry")
   expect_match_(res$tests$comparison, "at happy")
 })
 
-test_that("decompose_interactions: group main only -> 1 overall test, alpha = .05", function() {
+test_that("decompose_interactions: group main only -> 1 overall test, alpha = .02", function() {
   d <- make_fake_long()
   anova_tbl <- make_fake_anova_tbl("group")
   res <- decompose_interactions(d, anova_tbl)
   expect_equal_(nrow(res$tests), 1)
-  expect_equal_(res$alpha, 0.05)
+  expect_equal_(res$alpha, 0.02)
   expect_match_(res$tests$comparison, "overall")
   expect_identical_(res$rationale, "group main effect (overall)")
 })
@@ -486,14 +490,15 @@ test_that("decompose_interactions: no group-involving sig -> NULL tests", functi
 })
 
 test_that("decompose_interactions: 3-way trumps lower-order group interactions", function() {
-  # When both 3-way and a 2-way-with-group are significant, only the 4-cell
-  # decomposition should run (3-way branch is taken; 2-ways are not duplicated).
+  # When both 3-way and a 2-way-with-group are significant, only the 2-cell
+  # pre-registered decomposition runs (3-way branch is taken; 2-ways are not
+  # duplicated).
   d <- make_fake_long()
   anova_tbl <- make_fake_anova_tbl(c("emotion x repetition x group",
                                      "repetition x group"))
   res <- decompose_interactions(d, anova_tbl)
-  expect_equal_(nrow(res$tests), 4)
-  expect_equal_(res$alpha, 0.05 / 4)
+  expect_equal_(nrow(res$tests), 2)
+  expect_equal_(res$alpha, 0.02 / 2)
 })
 
 test_that("decompose_interactions: Bonferroni p column is p * k clipped at 1", function() {
@@ -502,6 +507,100 @@ test_that("decompose_interactions: Bonferroni p column is p * k clipped at 1", f
   res <- decompose_interactions(d, anova_tbl)
   k <- nrow(res$tests)
   expect_equal_(res$tests$p_bonferroni, pmin(res$tests$p * k, 1.0))
+})
+
+# ---------------------------------------------------------------------------
+# evaluate_hypotheses (H1/H2 verdict logic)
+# ---------------------------------------------------------------------------
+# Build a synthetic posthoc list (the shape that `decompose_interactions`
+# returns for a significant 3-way) with caller-controlled means and p-values.
+make_fake_posthoc <- function(
+    p_rep1 = 0.001, p_rep5 = 0.001,
+    mean_lonely_rep1 = 1.0, mean_nonlonely_rep1 = -0.5,
+    mean_lonely_rep5 = 1.0, mean_nonlonely_rep5 = -0.5,
+    alpha = 0.02 / 2) {
+  tests <- tibble(
+    comparison = c("Lonely vs Non-Lonely at angry, rep 1",
+                   "Lonely vs Non-Lonely at angry, rep 5"),
+    n_lonely = c(20, 20), n_nonlonely = c(22, 22),
+    mean_lonely = c(mean_lonely_rep1, mean_lonely_rep5),
+    se_lonely = c(0.20, 0.20),
+    mean_nonlonely = c(mean_nonlonely_rep1, mean_nonlonely_rep5),
+    se_nonlonely = c(0.18, 0.18),
+    t = c(3.0, 3.0), df = c(38.5, 38.5),
+    p = c(p_rep1, p_rep5),
+    d = c(0.9, 0.9),
+    alpha_bonf = c(alpha, alpha),
+    p_bonferroni = pmin(c(p_rep1, p_rep5) * 2, 1.0),
+    significant = c(p_rep1 < alpha, p_rep5 < alpha)
+  )
+  list(rationale = "3-way (emotion x repetition x group); pre-registered tests at angry rep 1 (H1) and angry rep 5 (H2)",
+       tests = tests, alpha = alpha)
+}
+
+test_that("evaluate_hypotheses: 3-way sig + both posthoc sig + correct direction -> both confirmed", function() {
+  anova_tbl <- make_fake_anova_tbl("emotion x repetition x group")
+  ph <- make_fake_posthoc()
+  v <- evaluate_hypotheses(anova_tbl, ph)
+  expect_equal_(length(v), 2)
+  expect_identical_(v[[1]]$name, "H1")
+  expect_identical_(v[[2]]$name, "H2")
+  expect_true_(isTRUE(v[[1]]$confirmed))
+  expect_true_(isTRUE(v[[2]]$confirmed))
+})
+
+test_that("evaluate_hypotheses: 3-way not sig -> both H1 and H2 not confirmed", function() {
+  # ANOVA reports no significant terms, so decompose_interactions returns NULL
+  # tests; evaluate_hypotheses must still produce a verdict (both not confirmed,
+  # gated by the 3-way criterion).
+  anova_tbl <- make_fake_anova_tbl(character())
+  ph <- list(rationale = NULL, tests = NULL, alpha = NA_real_)
+  v <- evaluate_hypotheses(anova_tbl, ph)
+  expect_true_(!isTRUE(v[[1]]$three_way_sig))
+  expect_true_(!isTRUE(v[[1]]$confirmed))
+  expect_true_(!isTRUE(v[[2]]$confirmed))
+  expect_true_(is.null(v[[1]]$t_row))
+  expect_true_(is.null(v[[2]]$t_row))
+})
+
+test_that("evaluate_hypotheses: 3-way sig but H2 posthoc not sig -> only H1 confirmed", function() {
+  anova_tbl <- make_fake_anova_tbl("emotion x repetition x group")
+  ph <- make_fake_posthoc(p_rep1 = 0.001, p_rep5 = 0.20)
+  v <- evaluate_hypotheses(anova_tbl, ph)
+  expect_true_(isTRUE(v[[1]]$confirmed))
+  expect_true_(!isTRUE(v[[2]]$confirmed))
+  expect_true_(!isTRUE(v[[2]]$posthoc_sig))
+})
+
+test_that("evaluate_hypotheses: direction wrong (lonely < non-lonely) -> not confirmed", function() {
+  # Posthoc test is significant, but the lonely group has the LOWER mean.
+  # Per the plan, H1 requires the mean to be higher in the lonely group, so
+  # the conjunction must fail.
+  anova_tbl <- make_fake_anova_tbl("emotion x repetition x group")
+  ph <- make_fake_posthoc(
+    p_rep1 = 0.001,
+    mean_lonely_rep1 = -1.0, mean_nonlonely_rep1 = 0.5,
+    p_rep5 = 0.001,
+    mean_lonely_rep5 = 1.0, mean_nonlonely_rep5 = -0.5
+  )
+  v <- evaluate_hypotheses(anova_tbl, ph)
+  # H1: posthoc sig but direction wrong -> not confirmed.
+  expect_true_(isTRUE(v[[1]]$posthoc_sig))
+  expect_true_(!isTRUE(v[[1]]$direction_ok))
+  expect_true_(!isTRUE(v[[1]]$confirmed))
+  # H2: posthoc sig and direction correct -> confirmed.
+  expect_true_(isTRUE(v[[2]]$confirmed))
+})
+
+test_that("evaluate_hypotheses: ALPHA_POSTHOC_BASE constant equals 0.02", function() {
+  # Guards against the post-hoc baseline drifting back to 0.05 by accident.
+  expect_equal_(ALPHA_POSTHOC_BASE, 0.02)
+})
+
+test_that("alpha constants: ANOVA cluster threshold equals 0.02 (no further correction)", function() {
+  # ANOVA terms are evaluated at 0.02 per term; only the within-cluster
+  # post-hoc family gets the additional Bonferroni divisor.
+  expect_equal_(ALPHA_CLUSTER, 0.02)
 })
 
 # ---------------------------------------------------------------------------
@@ -532,12 +631,53 @@ fake_per_cluster <- function() {
   desc_tbl$mean <- c(-1.1, -0.4, -1.0, -0.3, -1.05, -0.42, -0.95, -0.38)
   desc_tbl$se <- 0.15
 
+  posthoc <- list(rationale = "group main effect (overall)",
+                  tests = posthoc_tests, alpha = 0.02)
+  hypotheses <- evaluate_hypotheses(anova_tbl, posthoc)
+
   list(list(
     name = "frontal-N100",
     n = 42,
     anova = anova_tbl,
-    posthoc = list(rationale = "group main effect (overall)",
-                   tests = posthoc_tests, alpha = 0.05),
+    posthoc = posthoc,
+    hypotheses = hypotheses,
+    desc = desc_tbl
+  ))
+}
+
+# A second fixture that exercises the H1/H2 *confirmed* path: 3-way ANOVA
+# significant, both pre-registered posthoc tests significant with lonely > non-
+# lonely. Used to verify the verdict table renders correctly.
+fake_per_cluster_h1h2_confirmed <- function() {
+  anova_tbl <- make_fake_anova_tbl("emotion x repetition x group")
+  i_3way <- which(anova_tbl$Source == "emotion x repetition x group")
+  anova_tbl$F[i_3way] <- 12.30
+  anova_tbl$p_unc[i_3way] <- 0.0009
+  anova_tbl$pes[i_3way] <- 0.24
+
+  posthoc <- make_fake_posthoc(
+    p_rep1 = 0.001, p_rep5 = 0.005,
+    mean_lonely_rep1 = 1.2, mean_nonlonely_rep1 = -0.4,
+    mean_lonely_rep5 = 0.9, mean_nonlonely_rep5 = -0.2
+  )
+  hypotheses <- evaluate_hypotheses(anova_tbl, posthoc)
+
+  desc_tbl <- expand.grid(
+    group = c("Lonely", "Non-Lonely"),
+    emotion = c("angry", "happy"),
+    repetition = c("1", "5"),
+    stringsAsFactors = FALSE
+  )
+  desc_tbl$n <- 20
+  desc_tbl$mean <- c(1.2, -0.4, 0.4, 0.5, 0.9, -0.2, 0.5, 0.4)
+  desc_tbl$se <- 0.18
+
+  list(list(
+    name = "Hypersensitivity 1 (120-170 ms)",
+    n = 42,
+    anova = anova_tbl,
+    posthoc = posthoc,
+    hypotheses = hypotheses,
     desc = desc_tbl
   ))
 }
@@ -553,6 +693,26 @@ test_that("render_markdown writes a report mentioning the cluster and ANOVA", fu
   expect_match_(body, "frontal-N100")
   expect_match_(body, "Mixed ANOVA")
   expect_match_(body, "Lonely vs Non-Lonely")
+  # Hypothesis section is now always rendered, including when not confirmed.
+  expect_match_(body, "Hypothesis evaluation")
+  expect_match_(body, "H1")
+  expect_match_(body, "H2")
+})
+
+test_that("render_markdown shows H1/H2 as confirmed when criteria are met", function() {
+  tmp <- tempfile(fileext = ".md")
+  on.exit(unlink(tmp), add = TRUE)
+  per_cluster <- fake_per_cluster_h1h2_confirmed()
+  sample_info <- list(n_total = 42, n_lonely = 20, n_nonlonely = 22)
+  render_markdown(per_cluster, sample_info, tmp)
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "Hypothesis evaluation")
+  # Both verdict rows present, both rendered as confirmed (**yes** in the
+  # final column). Two confirmed verdicts -> at least two **yes** tokens
+  # in the verdict section.
+  n_confirm <- length(gregexpr("\\| \\*\\*yes\\*\\* \\|", body)[[1]])
+  if (n_confirm < 2)
+    stop(sprintf("expected at least 2 confirmed verdicts, found %d", n_confirm))
 })
 
 test_that("render_table_tex writes a LaTeX xltabular with the cluster header", function() {
@@ -575,6 +735,21 @@ test_that("render_prose_tex writes a sample-size sentence and a per-cluster sent
   expect_match_(body, "analytic sample")
   expect_match_(body, "frontal-N100 cluster")
   expect_match_(body, "mixed ANOVA")
+  # The Methods paragraph now references the pre-registered H1/H2 decomposition
+  # and the baseline 0.02 alpha with Bonferroni applied.
+  expect_match_(body, "H1")
+  expect_match_(body, "H2")
+})
+
+test_that("render_prose_tex marks H1 and H2 as confirmed when criteria are met", function() {
+  tmp <- tempfile(fileext = ".tex")
+  on.exit(unlink(tmp), add = TRUE)
+  per_cluster <- fake_per_cluster_h1h2_confirmed()
+  sample_info <- list(n_total = 42, n_lonely = 20, n_nonlonely = 22)
+  render_prose_tex(per_cluster, sample_info, tmp)
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "H1 \\(first presentation of angry faces\\) was confirmed")
+  expect_match_(body, "H2 \\(fifth presentation of angry faces\\) was confirmed")
 })
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,1111 @@
+16:26:19
+Reading raw data
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:99: RuntimeWarning: Channel names are not unique, found duplicates for: {'vEOG', 'hEOG'}. Applying running numbers for duplicates.
+  raw = mne.io.read_raw_bdf(in_file, preload=True)
+16:26:21
+Cropping data to experiment window (first event 20 → 101)
+  found 915 event(s) 20 (first one marks task start), 1 event(s) 101 (task end), recording duration = 1961.0s
+Cropped to 148.9s – 1941.6s (post-crop duration = 1792.7s)
+  raw.first_samp / sfreq = 148.886s, annotations.orig_time = 2000-01-01 00:00:00+00:00
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:134: RuntimeWarning: The unit for channel(s) lMast, rMast has changed from V to NA.
+  raw.set_channel_types(channel_mapping, verbose=False)
+Marked 10 channels bad from sidecar: ['T7', 'P5', 'P9', 'Oz', 'FT8', 'FC6', 'T8', 'TP8', 'P10', 'PO4']
+16:26:21
+Detecting breaks from event gaps
+Marked 4 break(s) as BAD_break (total 463.4s)
+  first BAD_break: expected (data-array)=41.542s, effective (data-array)=41.542s, stored (raw)=190.429s, drift=0.000s, onset_offset=148.886s
+16:26:21
+Defining channels
+16:26:21
+Setting preliminary referencing
+16:26:21
+Downsampling
+16:26:27
+Filtering 0.5-40Hz
+16:26:27
+ICA
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:239: RuntimeWarning: Using n_components=25 (resulting in n_components_=25) may lead to an unstable mixing matrix estimation because the ratio between the largest (43) and smallest (3.8e-05) variances is too large (> 1e6); consider setting n_components=0.999999 or an integer <= 23
+  ica.fit(inst=filtered, decim=3)
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:252: RuntimeWarning: More than one ECG channel found. Using only ECG1.
+  ecg_average = mne.preprocessing.create_ecg_epochs(filtered).average()
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:253: RuntimeWarning: More than one ECG channel found. Using only ECG1.
+  ecg_components, ecg_scores = ica.find_bads_ecg(filtered)
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:253: RuntimeWarning: More than one ECG channel found. Using only ECG1.
+  ecg_components, ecg_scores = ica.find_bads_ecg(filtered)
+16:26:32
+Identifying events
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:296: RuntimeWarning: More events than default colors available. You should pass a list of unique colors.
+  report.add_events(events=events, title='Events', sfreq=filtered.info["sfreq"])
+16:26:32
+Splitting into epochs
+Diagnostic: 0 epochs dropped due to BAD_break
+16:26:34
+Step 1: Detecting bad channels with extreme amplitude
+  T7 marked as bad (median std=0.22µV, near-flat)
+  TP7 marked as bad (median std=0.96µV, near-flat)
+  P5 marked as bad (median std=0.26µV, near-flat)
+  P9 marked as bad (median std=0.24µV, near-flat)
+  FT8 marked as bad (median std=0.24µV, near-flat)
+  T8 marked as bad (median std=0.22µV, near-flat)
+  TP8 marked as bad (median std=0.22µV, near-flat)
+  P10 marked as bad (median std=0.24µV, near-flat)
+  PO4 marked as bad (median std=0.23µV, near-flat)
+Interpolating 9 bad channels: ['T7', 'TP7', 'P5', 'P9', 'FT8', 'T8', 'TP8', 'P10', 'PO4']
+16:26:35
+Step 2: Removing epochs with extreme artifacts
+/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py:365: RuntimeWarning: All epochs were dropped!
+You might need to alter reject/flat-criteria or drop bad channels to avoid this. You can use Epochs.plot_drop_log() to see which channels are responsible for the dropping of epochs.
+  epochs = epochs.drop_bad(reject=reject_criteria_coarse)
+Removed 839 epochs with extreme artifacts (>500µV)
+Traceback (most recent call last):
+  File "/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py", line 482, in _process_subject
+    preprocess_EEG(in_file, out_folder, out_file, report_file,
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                   channel_config, channels_tsv=channels_tsv,
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                   n_jobs=n_jobs)
+                   ^^^^^^^^^^^^^^
+  File "/home/jmbathe/Documents/1_Projects/LonelyEEG/code/2_preprocess_eeg.py", line 370, in preprocess_EEG
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: All epochs were rejected in coarse artifact rejection. Bad channels detected: ['T7', 'TP7', 'P5', 'P9', 'FT8', 'T8', 'TP8', 'P10', 'PO4']. Please inspect the raw data for this participant.
+, vEOG-1, hEOG-0, hEOG-1
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+... filtering ICA sources
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+... filtering target
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+... filtering ICA sources
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+... filtering target
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+... filtering ICA sources
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+... filtering target
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+Omitting 115841 of 448172 (25.85%) samples, retaining 332331 (74.15%) samples.
+... filtering ICA sources
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+... filtering target
+Setting up band-pass filter from 1 - 10 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 0.75 Hz)
+- Upper passband edge: 10.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 10.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+More than one ECG channel found. Using only ECG1.
+Using channel ECG1 to identify heart beats.
+Setting up band-pass filter from 8 - 16 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 8.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 7.75 Hz)
+- Upper passband edge: 16.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 16.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+Number of ECG events detected : 1502 (average pulse 67.79385612536899 / min.)
+Not setting metadata
+1502 matching events found
+No baseline correction applied
+Using data from preloaded Raw for 1502 events and 251 original time points ...
+5 bad epochs dropped
+More than one ECG channel found. Using only ECG1.
+Using threshold: 0.32 for CTPS ECG detection
+More than one ECG channel found. Using only ECG1.
+Using channel ECG1 to identify heart beats.
+Setting up band-pass filter from 8 - 16 Hz
+
+FIR filter parameters
+---------------------
+Designing a two-pass forward and reverse, zero-phase, non-causal bandpass filter:
+- Windowed frequency-domain design (firwin2) method
+- Hann window
+- Lower passband edge: 8.00
+- Lower transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 7.75 Hz)
+- Upper passband edge: 16.00 Hz
+- Upper transition bandwidth: 0.50 Hz (-12 dB cutoff frequency: 16.25 Hz)
+- Filter length: 2500 samples (10.000 s)
+
+Number of ECG events detected : 1502 (average pulse 67.79385612536899 / min.)
+Not setting metadata
+1502 matching events found
+No baseline correction applied
+Using data from preloaded Raw for 1502 events and 251 original time points ...
+5 bad epochs dropped
+Overwriting existing file.
+Saving report to : /home/jmbathe/Documents/1_Projects/LonelyEEG/data/bids/derivatives/sub-37/eeg/sub-37_task-RovingOddball_eeg.html
+Applying ICA to Raw instance
+    Transforming to ICA space (25 components)
+    Zeroing out 1 ICA component
+    Projecting back using 54 PCA components
+Finding events on: Status
+Trigger channel Status has a non-zero initial value of 20 (consider using initial_event=True to detect this event)
+Removing orphaned offset at the beginning of the file.
+2742 events found on stim channel Status
+Event IDs: [  1  12  17  20  21  22  23  24  25  26  27  28  30  32  33  34  35  36
+  37  41  42  43  44  45  46  47  48 111 200]
+More events than default colors available. You should pass a list of unique colors.
+Overwriting existing file.
+Saving report to : /home/jmbathe/Documents/1_Projects/LonelyEEG/data/bids/derivatives/sub-37/eeg/sub-37_task-RovingOddball_eeg.html
+Not setting metadata
+839 matching events found
+Setting baseline interval to [-0.1, 0.0] s
+Applying baseline correction (mode: mean)
+0 projection items activated
+Using data from preloaded Raw for 839 events and 276 original time points ...
+0 bad epochs dropped
+    Using multitaper spectrum estimation with 7 DPSS windows
+Plotting power spectral density (dB=True).
+Averaging across epochs before plotting...
+Overwriting existing file.
+Saving report to : /home/jmbathe/Documents/1_Projects/LonelyEEG/data/bids/derivatives/sub-37/eeg/sub-37_task-RovingOddball_eeg.html
+Setting channel interpolation method to {'eeg': 'spline'}.
+Interpolating bad channels.
+    Automatic origin fit: head of radius 95.0 mm
+Computing interpolation matrix from 53 sensor positions
+Interpolating 11 sensors
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF3', 'F5', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF3', 'F5', 'FC5', 'AF4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'AF3', 'F7', 'AF8', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF3', 'F5', 'FT7', 'FC5', 'C5', 'AF4', 'F4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'F5', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF3', 'F3', 'F5', 'FT7', 'Fpz', 'AF4', 'F4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'F3', 'F5', 'FC5', 'AF4', 'F6', 'C2', 'P6']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'FT7', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'F5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'Fpz', 'Fp2', 'AF8', 'AF4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fpz', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'Fpz', 'Fp2', 'AF8', 'AF4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'AF3', 'Fpz', 'Fp2', 'AF8', 'AF4', 'F6', 'F8', 'FC2', 'C2']
+    Rejecting  epoch based on EEG : ['Fp2', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp2', 'AF8', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'Iz', 'Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'Fpz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'Fpz', 'AF4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF7', 'AF3', 'C5', 'CP5', 'Fpz', 'Fp2', 'AF8', 'AF4', 'F6', 'C2', 'CP2']
+    Rejecting  epoch based on EEG : ['Fp1', 'AF3', 'Fpz', 'Fp2', 'AF4', 'F6', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['F7', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['AF7', 'C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'Iz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF7', 'Iz', 'Fpz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'Fpz', 'Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C5', 'Iz', 'Fpz', 'Fp2', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'Iz', 'Fpz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF7', 'C5', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['Fpz', 'Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2', 'O2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2', 'O2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF3', 'C5', 'Iz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['AF4', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'Fp2', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'Iz', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['AF3', 'Iz', 'Fpz', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C5', 'AF4', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C5', 'C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+    Rejecting  epoch based on EEG : ['C2']
+839 bad epochs dropped
+All epochs were dropped!
+You might need to alter reject/flat-criteria or drop bad channels to avoid this. You can use Epochs.plot_drop_log() to see which channels are responsible for the dropping of epochs.

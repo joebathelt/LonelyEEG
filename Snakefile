@@ -13,6 +13,10 @@ CLUSTER_CHANNELS_TSV = "results/cluster_channel_positions.tsv"
 MAIN_REPORT = "results/main_analysis_report.md"
 MAIN_PROSE_TEX = "results/main_analysis_results.tex"
 MAIN_TABLE_TEX = "results/main_analysis_table.tex"
+IMAGE_RATINGS_TSV = "results/image_ratings.tsv"
+RATINGS_REPORT = "results/ratings_analysis_report.md"
+RATINGS_PROSE_TEX = "results/ratings_analysis_results.tex"
+RATINGS_TABLE_TEX = "results/ratings_analysis_table.tex"
 FIGURE_ERPS = "results/figure_erps.pdf"
 TESTS_REPORT = "results/tests_report.md"
 
@@ -26,6 +30,10 @@ rule all:
         MAIN_REPORT,
         MAIN_PROSE_TEX,
         MAIN_TABLE_TEX,
+        IMAGE_RATINGS_TSV,
+        RATINGS_REPORT,
+        RATINGS_PROSE_TEX,
+        RATINGS_TABLE_TEX,
         FIGURE_ERPS,
         TESTS_REPORT
 
@@ -122,6 +130,36 @@ rule main_analysis:
         "--out-table-tex {output.table}"
 
 
+rule extract_ratings:
+    input:
+        participants=PARTICIPANTS_TSV,
+        qc=QC_TSV,
+        preprocess_done=".snakemake_sentinels/preprocess.done",
+    output:
+        tsv=IMAGE_RATINGS_TSV,
+    shell:
+        "python code/9_extract_ratings.py "
+        "--participants-tsv {input.participants} "
+        "--qc-tsv {input.qc} "
+        f"--bids-folder {BIDS} "
+        "--out-tsv {output.tsv}"
+
+
+rule ratings_analysis:
+    input:
+        ratings=IMAGE_RATINGS_TSV,
+    output:
+        report=RATINGS_REPORT,
+        prose=RATINGS_PROSE_TEX,
+        table=RATINGS_TABLE_TEX,
+    shell:
+        "Rscript code/10_ratings_analysis.R "
+        "--ratings-tsv {input.ratings} "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table}"
+
+
 rule extract_erp_waveforms:
     input:
         participants=PARTICIPANTS_TSV,
@@ -173,7 +211,7 @@ rule tests:
 
 rule clean:
     shell:
-        f"rm -rf {BIDS}/derivatives .snakemake_sentinels/preprocess.done"
+        f"rm -rf {BIDS}/derivatives logs .snakemake_sentinels/preprocess.done"
 
 
 # Removes analysis outputs downstream of preprocessing but keeps the
