@@ -38,6 +38,8 @@ suppressPackageStartupMessages({
   library(readr)
   library(stringr)
   library(afex)
+  library(BayesFactor)
+  library(bayestestR)
 })
 afex::afex_options(check_contrasts = FALSE)
 
@@ -59,18 +61,21 @@ parse_args <- function() {
   required <- c("amplitudes-tsv", "out-report", "out-prose-tex", "out-table-tex")
   missing <- setdiff(required, names(out))
   if (length(missing)) stop("Missing required args: ", paste(missing, collapse = ", "))
-  # --ethnicity-filter requires --participants-tsv (the source of the ethnicity column).
-  if (!is.null(out[["ethnicity-filter"]]) && is.null(out[["participants-tsv"]])) {
-    stop("--ethnicity-filter requires --participants-tsv")
+  # --ethnicity-filter, --ethnicity-covariate, and --bsi-covariate all read
+  # participant-level fields, so they require --participants-tsv as the source.
+  for (k in c("ethnicity-filter", "ethnicity-covariate", "bsi-covariate")) {
+    if (!is.null(out[[k]]) && is.null(out[["participants-tsv"]])) {
+      stop("--", k, " requires --participants-tsv")
+    }
   }
-  if (!is.null(out[["ethnicity-covariate"]]) && is.null(out[["participants-tsv"]])) {
-    stop("--ethnicity-covariate requires --participants-tsv")
-  }
-  # Sample restriction (--ethnicity-filter) and covariate adjustment
-  # (--ethnicity-covariate) are alternative sensitivity modes; running them
-  # together would conflate the two.
-  if (!is.null(out[["ethnicity-filter"]]) && !is.null(out[["ethnicity-covariate"]])) {
-    stop("--ethnicity-filter and --ethnicity-covariate are mutually exclusive")
+  # Sample restriction (--ethnicity-filter) and the two covariate-adjustment
+  # modes (--ethnicity-covariate, --bsi-covariate) are alternative sensitivity
+  # designs; running more than one together would conflate them.
+  sensitivity_modes <- c("ethnicity-filter", "ethnicity-covariate", "bsi-covariate")
+  present <- sensitivity_modes[sensitivity_modes %in% names(out)]
+  if (length(present) > 1) {
+    stop("Sensitivity flags are mutually exclusive: ",
+         paste(paste0("--", present), collapse = ", "))
   }
   out
 }
@@ -119,19 +124,189 @@ fmt_eta2 <- function(x) {
   sub("0\\.", ".", sprintf("%.3f", x))
 }
 
-apa_f <- function(F_val, df1, df2, p, eta2) {
-  paste0("\\textit{F}(", df1, ", ", df2, ") = ", fmt_num(F_val, 2),
-         ", ", fmt_p_apa(p), ", $\\eta^{2}_{p}$ = ", fmt_eta2(eta2))
+# Bayes Factor formatter. Two significant figures by default; scientific
+# notation outside [0.01, 1000] to keep extreme BFs readable. Returns a bare
+# numeric string suitable for both plain markdown and LaTeX (callers wrap in
+# $...$ where needed).
+fmt_bf <- function(bf, digits = 2) {
+  if (!is.finite(bf)) return("n/a")
+  if (bf <= 0) return("n/a")
+  if (bf < 0.01 || bf > 1000) {
+    parts <- strsplit(formatC(bf, format = "e", digits = digits), "e")[[1]]
+    return(sprintf("%s x 10^%d", parts[1], as.integer(parts[2])))
+  }
+  formatC(bf, format = "fg", digits = digits + 1, flag = "#")
 }
 
-apa_t <- function(t_val, df, p, d) {
-  paste0("\\textit{t}(", fmt_num(df, 1), ") = ", fmt_num(t_val, 2),
-         ", ", fmt_p_apa(p), ", \\textit{d} = ", fmt_num(d, 2))
+# LaTeX variant of fmt_bf: emits proper math-mode scientific notation.
+fmt_bf_tex <- function(bf, digits = 2) {
+  if (!is.finite(bf)) return("n/a")
+  if (bf <= 0) return("n/a")
+  if (bf < 0.01 || bf > 1000) {
+    parts <- strsplit(formatC(bf, format = "e", digits = digits), "e")[[1]]
+    return(sprintf("$%s \\times 10^{%d}$", parts[1], as.integer(parts[2])))
+  }
+  formatC(bf, format = "fg", digits = digits + 1, flag = "#")
+}
+
+apa_f <- function(F_val, df1, df2, p, eta2, bf10 = NULL, bf01 = NULL) {
+  base <- paste0("\\textit{F}(", df1, ", ", df2, ") = ", fmt_num(F_val, 2),
+                 ", ", fmt_p_apa(p), ", $\\eta^{2}_{p}$ = ", fmt_eta2(eta2))
+  if (!is.null(bf10) && !is.null(bf01)) {
+    base <- paste0(base, ", $\\mathrm{BF}_{10}$ = ", fmt_bf_tex(bf10),
+                   ", $\\mathrm{BF}_{01}$ = ", fmt_bf_tex(bf01))
+  }
+  base
+}
+
+apa_t <- function(t_val, df, p, d, bf10 = NULL, bf01 = NULL) {
+  base <- paste0("\\textit{t}(", fmt_num(df, 1), ") = ", fmt_num(t_val, 2),
+                 ", ", fmt_p_apa(p), ", \\textit{d} = ", fmt_num(d, 2))
+  if (!is.null(bf10) && !is.null(bf01)) {
+    base <- paste0(base, ", $\\mathrm{BF}_{10}$ = ", fmt_bf_tex(bf10),
+                   ", $\\mathrm{BF}_{01}$ = ", fmt_bf_tex(bf01))
+  }
+  base
 }
 
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
+# Bayes Factor for a two-sample independent-groups comparison using the
+# BayesFactor default JZS prior (Cauchy on standardized effect size with
+# rscale = "medium" = sqrt(2)/2). BF10 = evidence for the alternative; BF01 =
+# 1/BF10 = evidence for the null. Note: ttestBF assumes equal variances, while
+# the frequentist Welch test does not. The Bayes Factor is therefore reported
+# alongside, not as a replacement for, the Welch t/d.
+bf_ttest <- function(a, b) {
+  a <- a[!is.na(a)]; b <- b[!is.na(b)]
+  if (length(a) < 2 || length(b) < 2) {
+    return(list(bf10 = NA_real_, bf01 = NA_real_,
+                log_bf10 = NA_real_, error_pct = NA_real_))
+  }
+  bf <- tryCatch(
+    suppressMessages(BayesFactor::ttestBF(x = a, y = b, paired = FALSE,
+                                          rscale = "medium")),
+    error = function(e) NULL
+  )
+  if (is.null(bf)) {
+    return(list(bf10 = NA_real_, bf01 = NA_real_,
+                log_bf10 = NA_real_, error_pct = NA_real_))
+  }
+  ext <- BayesFactor::extractBF(bf, logbf = FALSE)
+  bf10 <- ext$bf[1]
+  list(bf10 = bf10, bf01 = if (is.finite(bf10) && bf10 > 0) 1 / bf10 else NA_real_,
+       log_bf10 = log(bf10), error_pct = ext$error[1])
+}
+
+# Per-term ("inclusion") Bayes Factors for the 3-way mixed ANOVA. Strategy:
+# fit the full model space with BayesFactor::generalTestBF, retain participant
+# as a random effect (and the optional covariate as a fixed effect kept in
+# every model so its variance is partialled out of every comparison), then
+# pass the resulting BFBayesFactor object to bayestestR::bayesfactor_inclusion
+# with match_models = TRUE. The matched-models flag enforces that each
+# numerator model is compared only to the model that differs from it by
+# exactly the term in question (Westfall matching) — the cleanest Bayesian
+# analogue of the per-term F-tests reported by afex.
+#
+# Default JZS priors: rscaleFixed = 0.5 ("medium" on standardized fixed
+# effects), rscaleRandom = 1 ("nuisance"). These are the BayesFactor package
+# defaults of Rouder et al. (2012); pinned explicitly here for clarity and
+# stability across BayesFactor versions.
+#
+# Returns a tibble with one row per ANOVA Source (using the same labels as
+# fit_mixed_anova) and columns BF10, BF01. Rows for terms BayesFactor could
+# not compute are returned with NA.
+bf_anova_inclusion <- function(d, covariate_col = NULL) {
+  # generalTestBF wants participant_id as a factor; the orchestrator already
+  # factorises group/emotion/repetition/participant_id, but be defensive.
+  d <- d
+  d$participant_id <- factor(d$participant_id)
+  fixed_terms <- "emotion * repetition * group"
+  never_exclude <- "^participant_id$"
+  if (!is.null(covariate_col)) {
+    fixed_terms <- paste(fixed_terms, "+", covariate_col)
+    never_exclude <- c(never_exclude, paste0("^", covariate_col, "$"))
+  }
+  rhs <- paste(fixed_terms, "+ participant_id")
+  fml <- as.formula(paste("amplitude ~", rhs))
+  # BayesFactor uses Monte Carlo sampling for the marginal likelihood; pin
+  # the RNG state so repeated calls on identical data produce identical BFs,
+  # while leaving the caller's RNG state untouched.
+  old_seed <- if (exists(".Random.seed", envir = globalenv())) {
+    get(".Random.seed", envir = globalenv())
+  } else NULL
+  on.exit({
+    if (is.null(old_seed)) {
+      if (exists(".Random.seed", envir = globalenv()))
+        rm(".Random.seed", envir = globalenv())
+    } else {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    }
+  }, add = TRUE)
+  set.seed(0xBF)
+  bf_full <- tryCatch(
+    suppressMessages(BayesFactor::generalTestBF(
+      formula = fml, data = as.data.frame(d),
+      whichRandom = "participant_id",
+      neverExclude = never_exclude,
+      whichModels = "withmain",
+      rscaleFixed = 0.5, rscaleRandom = 1,
+      progress = FALSE
+    )),
+    error = function(e) NULL
+  )
+  # BayesFactor / bayestestR list term names alphabetically, so the two-way
+  # involving repetition is "group:repetition" (not "repetition:group") and
+  # the three-way is "emotion:group:repetition". The keys below match that
+  # alphabetical order; the display labels match fit_mixed_anova's renaming.
+  desired_terms <- c("group", "emotion", "repetition",
+                     "emotion:group", "group:repetition",
+                     "emotion:repetition", "emotion:group:repetition")
+  display_labels <- c(
+    "group" = "group",
+    "emotion" = "emotion",
+    "repetition" = "repetition",
+    "emotion:group" = "emotion x group",
+    "group:repetition" = "repetition x group",
+    "emotion:repetition" = "emotion x repetition",
+    "emotion:group:repetition" = "emotion x repetition x group"
+  )
+  empty <- tibble(Source = unname(display_labels[desired_terms]),
+                  BF10 = NA_real_, BF01 = NA_real_)
+  if (is.null(bf_full)) return(empty)
+  inc <- tryCatch(
+    suppressMessages(bayestestR::bayesfactor_inclusion(bf_full,
+                                                       match_models = TRUE)),
+    error = function(e) NULL
+  )
+  if (is.null(inc)) return(empty)
+  inc_df <- as.data.frame(inc)
+  # bayestestR returns log-BF in column log_BF (or column "log_BF" depending
+  # on version); also row names are the model term strings. Normalise.
+  term_names <- rownames(inc_df)
+  log_bf_col <- intersect(c("log_BF", "log_bf"), names(inc_df))
+  bf_col <- intersect(c("BF", "bf"), names(inc_df))
+  if (length(log_bf_col) == 1) {
+    bf10_vec <- exp(inc_df[[log_bf_col]])
+  } else if (length(bf_col) == 1) {
+    bf10_vec <- inc_df[[bf_col]]
+  } else {
+    return(empty)
+  }
+  names(bf10_vec) <- term_names
+  out <- empty
+  for (i in seq_along(desired_terms)) {
+    key <- desired_terms[i]
+    if (key %in% names(bf10_vec) && is.finite(bf10_vec[[key]])) {
+      bf10 <- bf10_vec[[key]]
+      out$BF10[i] <- bf10
+      out$BF01[i] <- if (bf10 > 0) 1 / bf10 else NA_real_
+    }
+  }
+  out
+}
+
 welch_d <- function(a, b) {
   a <- a[!is.na(a)]; b <- b[!is.na(b)]
   na <- length(a); nb <- length(b)
@@ -163,11 +338,27 @@ fit_mixed_anova <- function(d, covariate_col = NULL) {
   # filtered out by the `match(desired, ...)` step below. The covariate's own
   # main-effect row is preserved on an "covariate_row" attribute so callers
   # can report it separately.
+  #
+  # afex defaults to `factorize = TRUE`, which coerces both `between` factors
+  # and the `covariate` column to factors. For a continuous covariate
+  # (e.g. BSI-53 GSI with many unique values) that produces an n-level factor
+  # that consumes all the between-subjects df and breaks the model. We pass
+  # `factorize = FALSE` so the covariate stays numeric; `group` is already a
+  # factor at this point, so the setting is a no-op for the between factor.
+  # The covariate is also mean-centered: afex auto-includes covariate x
+  # within-factor interactions, and centering removes the baseline-level
+  # offset that would otherwise shift the categorical main effects under
+  # Type III SS.
+  if (!is.null(covariate_col)) {
+    d[[covariate_col]] <- as.numeric(d[[covariate_col]]) -
+      mean(as.numeric(d[[covariate_col]]), na.rm = TRUE)
+  }
   fit <- afex::aov_ez(
     id = "participant_id", dv = "amplitude", data = d,
     within = c("emotion", "repetition"), between = "group",
     covariate = covariate_col,
-    type = 3, anova_table = list(es = "pes")
+    type = 3, factorize = FALSE,
+    anova_table = list(es = "pes")
   )
   tbl <- as.data.frame(fit$anova_table)
   tbl$Source <- rownames(tbl); rownames(tbl) <- NULL
@@ -201,6 +392,11 @@ fit_mixed_anova <- function(d, covariate_col = NULL) {
   tbl <- tbl[match(desired, tbl$Source), ]
   tbl$p_bonf <- pmin(tbl$p_unc * 3, 1.0)
   tbl$significant_at_cluster_alpha <- tbl$p_unc < ALPHA_CLUSTER
+  # Per-term inclusion Bayes Factors (BayesFactor default JZS prior). The
+  # result aligns by Source; left_join preserves row order and fills NA where
+  # a term's BF could not be computed.
+  bf_tbl <- bf_anova_inclusion(d, covariate_col = covariate_col)
+  tbl <- dplyr::left_join(tbl, bf_tbl, by = "Source")
   attr(tbl, "covariate_row") <- covariate_row
   tbl
 }
@@ -248,18 +444,37 @@ binarise_ethnicity <- function(participants, token) {
          european_descent = as.numeric(has_token))
 }
 
+# Extract a numeric covariate column from `participants` for ANCOVA-style
+# adjustment. The named column is coerced to numeric (any non-numeric strings
+# such as "n/a" become NA), and rows with NA are dropped — afex covariates do
+# not tolerate NA values, and the orchestrator joins the result inner-style so
+# NA-covariate participants are excluded from the analytic sample.
+extract_numeric_covariate <- function(participants, column) {
+  if (!column %in% names(participants)) {
+    stop(sprintf("Covariate column '%s' not found in participants.tsv", column))
+  }
+  vals <- suppressWarnings(as.numeric(participants[[column]]))
+  pids <- as.character(participants$participant_id)
+  keep <- !is.na(vals)
+  out <- tibble(participant_id = pids[keep])
+  out[[column]] <- vals[keep]
+  out
+}
+
 # Build one between-group Welch t-test row, given the per-subject amplitude
 # averages within the cell. Returns a tibble with a single row.
 welch_row <- function(d_sub, label) {
   a <- d_sub$amplitude[d_sub$group == "Lonely"]
   b <- d_sub$amplitude[d_sub$group == "Non-Lonely"]
   r <- welch_d(a, b)
+  bf <- bf_ttest(a, b)
   tibble(
     comparison = label,
     n_lonely = r$n_a, n_nonlonely = r$n_b,
     mean_lonely = r$mean_a, se_lonely = r$se_a,
     mean_nonlonely = r$mean_b, se_nonlonely = r$se_b,
-    t = r$t, df = r$df, p = r$p, d = r$d
+    t = r$t, df = r$df, p = r$p, d = r$d,
+    BF10 = bf$bf10, BF01 = bf$bf01
   )
 }
 
@@ -385,8 +600,11 @@ evaluate_hypotheses <- function(anova_tbl, posthoc) {
 # Report builders
 # ---------------------------------------------------------------------------
 render_markdown <- function(per_cluster, sample_info, out_path,
-                            filter_info = NULL, covariate_info = NULL) {
-  title <- if (!is.null(covariate_info)) {
+                            filter_info = NULL, covariate_info = NULL,
+                            bsi_info = NULL) {
+  title <- if (!is.null(bsi_info)) {
+    sprintf("# Main Analysis Report (sensitivity: %s covariate)", bsi_info$label)
+  } else if (!is.null(covariate_info)) {
     "# Main Analysis Report (sensitivity: European-descent covariate)"
   } else if (!is.null(filter_info)) {
     sprintf("# Main Analysis Report (sensitivity: %s ethnicity)", filter_info$token)
@@ -394,7 +612,15 @@ render_markdown <- function(per_cluster, sample_info, out_path,
     "# Main Analysis Report"
   }
   lines <- c(title, "")
-  if (!is.null(covariate_info)) {
+  if (!is.null(bsi_info)) {
+    n_dropped <- bsi_info$n_before - bsi_info$n_after
+    lines <- c(lines, sprintf(
+      "_Sensitivity analysis: full post-QC sample retained, with each participant's **%s** score (column `%s` in `participants.tsv`) included as a continuous between-subjects nuisance covariate to control for the influence of other mental-health difficulties. n = %d after dropping %d participant(s) with NA %s (M = %s, SD = %s, range %s-%s)._",
+      bsi_info$label, bsi_info$column,
+      bsi_info$n_after, n_dropped, bsi_info$label,
+      fmt_num(bsi_info$mean, 2), fmt_num(bsi_info$sd, 2),
+      fmt_num(bsi_info$min, 2), fmt_num(bsi_info$max, 2)), "")
+  } else if (!is.null(covariate_info)) {
     n_dropped <- covariate_info$n_before - covariate_info$n_after
     lines <- c(lines, sprintf(
       "_Sensitivity analysis: full post-QC sample retained, with a binary indicator of **%s** descent (1 = at least one parent or grandparent listed as %s in the `ethnicity` field; 0 = none) included as a between-subjects nuisance covariate. n = %d after dropping %d participant(s) with NA ethnicity (%s-descent n = %d; other n = %d)._",
@@ -428,21 +654,23 @@ render_markdown <- function(per_cluster, sample_info, out_path,
     }
     lines <- c(lines, "",
                "### Mixed ANOVA (3-way, afex::aov_ez, Type III SS)", "",
-               sprintf("| Source | df1 | df2 | F | p | partial eta^2 | sig. (alpha<%.2f) |",
+               sprintf("| Source | df1 | df2 | F | p | partial eta^2 | BF10 | BF01 | sig. (alpha<%.2f) |",
                        ALPHA_CLUSTER),
-               "|---|---|---|---|---|---|---|")
+               "|---|---|---|---|---|---|---|---|---|")
     for (i in seq_len(nrow(cl$anova))) {
       r <- cl$anova[i, ]
-      lines <- c(lines, sprintf("| %s | %s | %s | %s | %s | %s | %s |",
+      lines <- c(lines, sprintf("| %s | %s | %s | %s | %s | %s | %s | %s | %s |",
                                 r$Source, fmt_num(r$df1, 0), fmt_num(r$df2, 0),
                                 fmt_num(r$F, 2), fmt_p(r$p_unc, 3),
                                 fmt_eta2(r$pes),
+                                fmt_bf(r$BF10), fmt_bf(r$BF01),
                                 if (isTRUE(r$significant_at_cluster_alpha)) "**yes**" else "no"))
     }
     if (!is.null(cl$covariate_row)) {
       cr <- cl$covariate_row
       lines <- c(lines, "",
-                 sprintf("_Nuisance covariate (european_descent): F(%s, %s) = %s, p = %s, partial eta^2 = %s._",
+                 sprintf("_Nuisance covariate (%s): F(%s, %s) = %s, p = %s, partial eta^2 = %s._",
+                         cr$Source,
                          fmt_num(cr$df1, 0), fmt_num(cr$df2, 0),
                          fmt_num(cr$F, 2), fmt_p(cr$p_unc, 3),
                          fmt_eta2(cr$pes)))
@@ -457,17 +685,18 @@ render_markdown <- function(per_cluster, sample_info, out_path,
                          ALPHA_POSTHOC_BASE,
                          cl$posthoc$alpha),
                  "",
-                 "| Comparison | Lonely mean (SE) | Non-Lonely mean (SE) | t | df | p | p Bonf. | Cohen d | sig. |",
-                 "|---|---|---|---|---|---|---|---|---|")
+                 "| Comparison | Lonely mean (SE) | Non-Lonely mean (SE) | t | df | p | p Bonf. | Cohen d | BF10 | BF01 | sig. |",
+                 "|---|---|---|---|---|---|---|---|---|---|---|")
       for (i in seq_len(nrow(cl$posthoc$tests))) {
         r <- cl$posthoc$tests[i, ]
-        lines <- c(lines, sprintf("| %s | %s (%s) | %s (%s) | %s | %s | %s | %s | %s | %s |",
+        lines <- c(lines, sprintf("| %s | %s (%s) | %s (%s) | %s | %s | %s | %s | %s | %s | %s | %s |",
                                   r$comparison,
                                   fmt_num(r$mean_lonely, 2), fmt_num(r$se_lonely, 2),
                                   fmt_num(r$mean_nonlonely, 2), fmt_num(r$se_nonlonely, 2),
                                   fmt_num(r$t, 2), fmt_num(r$df, 1),
                                   fmt_p(r$p, 3), fmt_p(r$p_bonferroni, 3),
                                   fmt_num(r$d, 2),
+                                  fmt_bf(r$BF10), fmt_bf(r$BF01),
                                   if (isTRUE(r$significant)) "**yes**" else "no"))
       }
     } else {
@@ -504,10 +733,11 @@ render_markdown <- function(per_cluster, sample_info, out_path,
       }
       tr <- h$t_row
       posthoc_str <- if (!is.null(tr)) {
-        sprintf("%s (t(%s) = %s, p = %s, p Bonf. = %s)",
+        sprintf("%s (t(%s) = %s, p = %s, p Bonf. = %s, BF10 = %s, BF01 = %s)",
                 if (isTRUE(h$posthoc_sig)) "**yes**" else "no",
                 fmt_num(tr$df, 1), fmt_num(tr$t, 2),
-                fmt_p(tr$p, 3), fmt_p(tr$p_bonferroni, 3))
+                fmt_p(tr$p, 3), fmt_p(tr$p_bonferroni, 3),
+                fmt_bf(tr$BF10), fmt_bf(tr$BF01))
       } else {
         "_not run (3-way not significant)_"
       }
@@ -537,6 +767,9 @@ render_markdown <- function(per_cluster, sample_info, out_path,
              if (!is.null(covariate_info)) sprintf(
                "- Sensitivity covariate (ANCOVA): full post-QC sample retained (NA-ethnicity participants dropped, n = %d of %d). A binary indicator (1 if `ethnicity` in `participants.tsv` lists `%s` as a parent/grandparent continent of birth, 0 otherwise) is included as a between-subjects nuisance covariate via the `covariate` argument of `afex::aov_ez`. Its variance is partialled out of the between-subjects error stratum; the covariate's own main-effect F is reported per cluster as a note below each ANOVA table.",
                covariate_info$n_after, covariate_info$n_before, covariate_info$token) else NULL,
+             if (!is.null(bsi_info)) sprintf(
+               "- Sensitivity covariate (ANCOVA): full post-QC sample retained (participants with NA `%s` dropped, n = %d of %d). Each participant's %s score is included as a continuous between-subjects nuisance covariate via the `covariate` argument of `afex::aov_ez`, controlling for between-group differences in overall mental-health symptom load. Its variance is partialled out of the between-subjects error stratum; the covariate's own main-effect F is reported per cluster as a note below each ANOVA table.",
+               bsi_info$column, bsi_info$n_after, bsi_info$n_before, bsi_info$label) else NULL,
              "- Per-cluster mean ERP amplitudes were extracted in Python (`5_extract_amplitudes.py`) and supplied as a long-format TSV.",
              "- 3-way mixed ANOVA via `afex::aov_ez` (Type III SS; classical multi-stratum error terms; partial eta-squared as effect size).",
              "- Pre-registered post-hoc Welch t-tests: a significant 3-way interaction is decomposed into the two pre-registered Lonely vs Non-Lonely comparisons at angry x rep 1 (H1) and angry x rep 5 (H2). When the 3-way is not significant, exploratory follow-ups may still be reported for a significant 2-way interaction with group (one between-group test per level of the within factor) or a significant group main effect (one overall comparison on subject-mean amplitudes); these are not part of the H1/H2 confirmation criteria.",
@@ -544,12 +777,14 @@ render_markdown <- function(per_cluster, sample_info, out_path,
                      ALPHA_CLUSTER, ALPHA_POSTHOC_BASE, ALPHA_POSTHOC_BASE),
              sprintf("- Hypothesis verdicts: H1 (first presentation of angry faces) and H2 (fifth presentation of angry faces) are reported as *confirmed* in a cluster when (1) the 3-way emotion x repetition x group interaction is significant at alpha < %.2f, (2) the pre-registered Welch t-test for the relevant cell is significant at the within-cluster Bonferroni threshold (alpha = %.4f for the H1/H2 family of k = 2 tests), and (3) the mean amplitude is higher (more positive, signed) in the Lonely group than in the Non-Lonely group.",
                      ALPHA_CLUSTER, ALPHA_POSTHOC_THREEWAY),
+             "- Bayes Factors are reported alongside the frequentist tests using the BayesFactor R package with its default JZS priors. Per-term inclusion Bayes Factors for the ANOVA are computed by `bayestestR::bayesfactor_inclusion(..., match_models = TRUE)` over a model space fitted with `BayesFactor::generalTestBF` (rscaleFixed = 0.5, rscaleRandom = 1, `participant_id` as a random effect; any sensitivity covariate is included in every model so its variance is partialled out of every comparison). Bayes Factors for the post-hoc between-group t-tests are computed by `BayesFactor::ttestBF` with the default Cauchy prior on the standardized effect (rscale = \"medium\" = $\\sqrt{2}/2$); note that `ttestBF` assumes equal variances, while the Welch t-test reported alongside it does not. BF10 quantifies evidence for the alternative hypothesis; BF01 = 1/BF10 quantifies evidence for the null. By Jeffreys' conventions, BF > 3 is interpreted as substantial evidence, BF > 10 as strong evidence, and BF > 30 as very strong evidence.",
              "")
   writeLines(lines, out_path)
 }
 
 render_table_tex <- function(per_cluster, out_path,
-                             filter_info = NULL, covariate_info = NULL) {
+                             filter_info = NULL, covariate_info = NULL,
+                             bsi_info = NULL) {
   # APA-style ANOVA table: italicised statistic letters in the header, a single
   # combined `df` column (df_num, df_den), no separate Sig. column (asterisks
   # mark significant rows), and a Note. below the table explaining the markers
@@ -559,23 +794,39 @@ render_table_tex <- function(per_cluster, out_path,
     "(Type III sums of squares; classical multi-stratum error terms; ",
     "partial $\\eta^{2}$ as effect size). Asterisks mark effects ",
     "significant at $\\alpha<%.2f$. \\textit{p}-values below $10^{-3}$ ",
-    "are reported in scientific notation."),
+    "are reported in scientific notation. Per-term inclusion Bayes Factors ",
+    "(BF$_{10}$ = evidence for the alternative, BF$_{01}$ = 1/BF$_{10}$ = ",
+    "evidence for the null) are computed by ",
+    "\\texttt{bayestestR::bayesfactor\\_inclusion} (matched-models) over a ",
+    "model space fitted with \\texttt{BayesFactor::generalTestBF} using the ",
+    "default JZS priors (rscaleFixed = 0.5, rscaleRandom = 1) with ",
+    "\\texttt{participant\\_id} as a random effect."),
     ALPHA_CLUSTER)
 
   lines <- c(
     "% Requires: booktabs, xltabular, array.",
     "\\begingroup", "\\scriptsize",
-    "\\setlength{\\tabcolsep}{6pt}",
+    "\\setlength{\\tabcolsep}{4pt}",
     "\\renewcommand{\\arraystretch}{1.15}",
     paste0("\\begin{xltabular}{\\textwidth}{@{}",
            ">{\\raggedright\\arraybackslash}X",
+           ">{\\centering\\arraybackslash}p{1.2cm}",
+           ">{\\centering\\arraybackslash}p{1.2cm}",
+           ">{\\centering\\arraybackslash}p{2.0cm}",
+           ">{\\centering\\arraybackslash}p{1.1cm}",
            ">{\\centering\\arraybackslash}p{1.4cm}",
-           ">{\\centering\\arraybackslash}p{1.4cm}",
-           ">{\\centering\\arraybackslash}p{2.4cm}",
-           ">{\\centering\\arraybackslash}p{1.2cm}@{}}"),
+           ">{\\centering\\arraybackslash}p{1.4cm}@{}}"),
     sprintf("\\caption{3-way mixed ANOVA (emotion $\\times$ repetition $\\times$ group) per spatiotemporal cluster. Effects are evaluated at $\\alpha<%.2f$ per term.%s} \\\\",
             ALPHA_CLUSTER,
-            if (!is.null(covariate_info)) sprintf(
+            if (!is.null(bsi_info)) sprintf(
+              " Sensitivity analysis: full post-QC sample retained (n = %d after dropping %d NA-%s participant(s); %s $M=%s$, $SD=%s$); each participant's %s score was included as a continuous between-subjects nuisance covariate via \\texttt{afex::aov\\_ez} to control for between-group differences in overall mental-health symptom load.",
+              bsi_info$n_after,
+              bsi_info$n_before - bsi_info$n_after,
+              bsi_info$column,
+              bsi_info$label,
+              fmt_num(bsi_info$mean, 2), fmt_num(bsi_info$sd, 2),
+              bsi_info$label)
+            else if (!is.null(covariate_info)) sprintf(
               " Sensitivity analysis: full post-QC sample retained (n = %d after dropping %d NA-ethnicity participant(s); %s-descent n = %d, other n = %d); a binary %s-descent indicator was included as a between-subjects nuisance covariate via \\texttt{afex::aov\\_ez}.",
               covariate_info$n_after,
               covariate_info$n_before - covariate_info$n_after,
@@ -587,28 +838,29 @@ render_table_tex <- function(per_cluster, out_path,
               filter_info$token, filter_info$n_after, filter_info$n_before) else ""),
     "\\label{tab:main_analysis} \\\\",
     "\\toprule",
-    "\\textbf{Source} & \\textit{df} & \\textit{F} & \\textit{p} & $\\eta^{2}_{p}$ \\\\",
+    "\\textbf{Source} & \\textit{df} & \\textit{F} & \\textit{p} & $\\eta^{2}_{p}$ & BF$_{10}$ & BF$_{01}$ \\\\",
     "\\midrule \\endfirsthead",
     "\\toprule",
-    "\\textbf{Source} & \\textit{df} & \\textit{F} & \\textit{p} & $\\eta^{2}_{p}$ \\\\",
+    "\\textbf{Source} & \\textit{df} & \\textit{F} & \\textit{p} & $\\eta^{2}_{p}$ & BF$_{10}$ & BF$_{01}$ \\\\",
     "\\midrule \\endhead",
     "\\bottomrule",
-    sprintf("\\multicolumn{5}{@{}p{\\textwidth}@{}}{%s} \\\\", note_text),
+    sprintf("\\multicolumn{7}{@{}p{\\textwidth}@{}}{%s} \\\\", note_text),
     "\\endlastfoot"
   )
 
   for (cl in per_cluster) {
-    lines <- c(lines, sprintf("\\multicolumn{5}{@{}l}{\\textbf{%s} (effective $n=%d$)} \\\\",
+    lines <- c(lines, sprintf("\\multicolumn{7}{@{}l}{\\textbf{%s} (effective $n=%d$)} \\\\",
                               cl$name, cl$n))
     for (i in seq_len(nrow(cl$anova))) {
       r <- cl$anova[i, ]
       F_str <- fmt_num(r$F, 2)
       if (isTRUE(r$significant_at_cluster_alpha)) F_str <- paste0(F_str, "*")
       df_str <- sprintf("%s, %s", fmt_num(r$df1, 0), fmt_num(r$df2, 0))
-      lines <- c(lines, sprintf("\\hspace{1em}%s & %s & %s & %s & %s \\\\",
+      lines <- c(lines, sprintf("\\hspace{1em}%s & %s & %s & %s & %s & %s & %s \\\\",
                                 r$Source, df_str,
                                 F_str, fmt_p_tex(r$p_unc),
-                                fmt_eta2(r$pes)))
+                                fmt_eta2(r$pes),
+                                fmt_bf_tex(r$BF10), fmt_bf_tex(r$BF01)))
     }
     lines <- c(lines, "\\addlinespace")
   }
@@ -618,8 +870,25 @@ render_table_tex <- function(per_cluster, out_path,
 }
 
 render_prose_tex <- function(per_cluster, sample_info, out_path,
-                             filter_info = NULL, covariate_info = NULL) {
-  preface <- if (!is.null(covariate_info)) sprintf(
+                             filter_info = NULL, covariate_info = NULL,
+                             bsi_info = NULL) {
+  preface <- if (!is.null(bsi_info)) sprintf(
+    paste0("This sensitivity analysis re-fits the main mixed ANOVA on the ",
+           "full post-QC sample (%d of %d participants; %d dropped for ",
+           "missing %s), including each participant's %s score ",
+           "(\\texttt{%s} column in \\texttt{participants.tsv}; ",
+           "$M=%s$, $SD=%s$, range %s--%s) as a continuous ",
+           "between-subjects nuisance covariate via the \\texttt{covariate} ",
+           "argument of \\texttt{afex::aov\\_ez}, partialling its variance ",
+           "out of the between-subjects error stratum. This adjusts the ",
+           "between-group comparison for between-group differences in ",
+           "overall mental-health symptom load. "),
+    bsi_info$n_after, bsi_info$n_before,
+    bsi_info$n_before - bsi_info$n_after,
+    bsi_info$column, bsi_info$label, bsi_info$column,
+    fmt_num(bsi_info$mean, 2), fmt_num(bsi_info$sd, 2),
+    fmt_num(bsi_info$min, 2), fmt_num(bsi_info$max, 2))
+  else if (!is.null(covariate_info)) sprintf(
     paste0("This sensitivity analysis re-fits the main mixed ANOVA on the ",
            "full post-QC sample (%d of %d participants; %d dropped for ",
            "missing ethnicity), including a binary indicator of %s descent ",
@@ -683,7 +952,29 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
           "within-cluster Bonferroni threshold, and (iii) the mean",
           "amplitude was higher (more positive, signed) in the lonely than",
           "in the non-lonely group. \\textit{p}-values below $10^{-3}$ are",
-          "reported in scientific notation. The analytic sample comprised",
+          "reported in scientific notation. To complement the frequentist",
+          "tests, Bayes Factors were computed with the \\texttt{BayesFactor}",
+          "\\texttt{R} package using its default Jeffreys-Zellner-Siow (JZS)",
+          "priors. Per-term inclusion Bayes Factors for the mixed ANOVA were",
+          "obtained via",
+          "\\texttt{bayestestR::bayesfactor\\_inclusion(match\\_models=TRUE)}",
+          "applied to the model space fitted with",
+          "\\texttt{BayesFactor::generalTestBF}",
+          "($r_{\\text{fixed}}=0.5$, $r_{\\text{random}}=1$;",
+          "\\texttt{participant\\_id} as a random effect; for the sensitivity",
+          "analyses the covariate was kept in every model so its variance",
+          "was partialled out of every comparison). Bayes Factors for the",
+          "between-group post-hoc comparisons were computed with",
+          "\\texttt{BayesFactor::ttestBF} using the default Cauchy prior on",
+          "the standardized effect size",
+          "($r=\\sqrt{2}/2$); note that \\texttt{ttestBF} assumes equal",
+          "variances, whereas the Welch $t$-test reported alongside it does",
+          "not. We report both $\\mathrm{BF}_{10}$ (evidence for the",
+          "alternative hypothesis over the null) and",
+          "$\\mathrm{BF}_{01}=1/\\mathrm{BF}_{10}$ (evidence for the null",
+          "over the alternative); following Jeffreys, Bayes Factors above",
+          "3, 10, and 30 are interpreted as substantial, strong, and very",
+          "strong evidence respectively. The analytic sample comprised",
           "%d participants (lonely $n=%d$; non-lonely $n=%d$).",
           sep = " "),
     ALPHA_CLUSTER,
@@ -700,7 +991,8 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
         sentences <- c(sentences,
                        sprintf("a significant effect of %s (%s)",
                                r$Source, apa_f(r$F, r$df1, r$df2,
-                                               r$p_unc, r$pes)))
+                                               r$p_unc, r$pes,
+                                               r$BF10, r$BF01)))
       }
       if (length(sentences) == 1) {
         effect_sentence <- paste0("revealed ", sentences[[1]])
@@ -718,9 +1010,13 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
 
     grp_row <- cl$anova[cl$anova$Source == "group", ]
     grp_clause <- if (nrow(grp_row) == 1 && !isTRUE(grp_row$significant_at_cluster_alpha)) {
-      sprintf("; the group main effect was %s",
+      bf01_note <- if (isTRUE(is.finite(grp_row$BF01) && grp_row$BF01 > 3))
+        ", providing substantial evidence for the null" else ""
+      sprintf("; the group main effect was %s%s",
               apa_f(grp_row$F, grp_row$df1, grp_row$df2,
-                    grp_row$p_unc, grp_row$pes))
+                    grp_row$p_unc, grp_row$pes,
+                    grp_row$BF10, grp_row$BF01),
+              bf01_note)
     } else ""
 
     ph <- cl$posthoc
@@ -736,7 +1032,8 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
             "more negative" else "more positive"
           parts <- c(parts,
                      sprintf("%s (%s; lonely %s than non-lonely)",
-                             r$comparison, apa_t(r$t, r$df, r$p, r$d),
+                             r$comparison,
+                             apa_t(r$t, r$df, r$p, r$d, r$BF10, r$BF01),
                              direction))
         }
         ph_sentence <- paste0(
@@ -752,7 +1049,8 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
           # Single overall comparison: just report it.
           ph_sentence <- paste0(
             " The corresponding Welch $t$-test was ",
-            apa_t(nearest$t, nearest$df, nearest$p, nearest$d),
+            apa_t(nearest$t, nearest$df, nearest$p, nearest$d,
+                  nearest$BF10, nearest$BF01),
             " (lonely ", nearest_dir, " than non-lonely)."
           )
         } else {
@@ -762,7 +1060,8 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
             "$) did not isolate a specific level driving the effect; the ",
             "largest difference was at ",
             sprintf("%s (%s; lonely %s than non-lonely)", nearest$comparison,
-                    apa_t(nearest$t, nearest$df, nearest$p, nearest$d),
+                    apa_t(nearest$t, nearest$df, nearest$p, nearest$d,
+                          nearest$BF10, nearest$BF01),
                     nearest_dir), "."
           )
         }
@@ -781,7 +1080,7 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
         part <- sprintf(
           "%s (%s) was confirmed: the three-way interaction was significant (see above), the pre-registered Welch $t$-test was significant (%s), and the mean amplitude was higher in the lonely ($M=%s$) than the non-lonely ($M=%s$) group",
           h$name, h$description,
-          apa_t(tr$t, tr$df, tr$p, tr$d),
+          apa_t(tr$t, tr$df, tr$p, tr$d, tr$BF10, tr$BF01),
           fmt_num(tr$mean_lonely, 2), fmt_num(tr$mean_nonlonely, 2)
         )
       } else if (!isTRUE(h$three_way_sig)) {
@@ -797,10 +1096,13 @@ render_prose_tex <- function(per_cluster, sample_info, out_path,
       } else {
         reasons <- character()
         if (!isTRUE(h$posthoc_sig)) {
+          bf01_note <- if (isTRUE(is.finite(tr$BF01) && tr$BF01 > 3))
+            ", providing substantial evidence for the null" else ""
           reasons <- c(reasons,
-                       sprintf("the Welch $t$-test did not reach the within-cluster Bonferroni threshold (%s, $p_{\\text{Bonf.}}=%s$)",
-                               apa_t(tr$t, tr$df, tr$p, tr$d),
-                               fmt_p(tr$p_bonferroni, 3)))
+                       sprintf("the Welch $t$-test did not reach the within-cluster Bonferroni threshold (%s, $p_{\\text{Bonf.}}=%s$)%s",
+                               apa_t(tr$t, tr$df, tr$p, tr$d, tr$BF10, tr$BF01),
+                               fmt_p(tr$p_bonferroni, 3),
+                               bf01_note))
         }
         if (!isTRUE(h$direction_ok)) {
           reasons <- c(reasons,
@@ -861,6 +1163,7 @@ main <- function() {
   # afex::aov_ez as a between-subjects nuisance covariate. Participants with
   # NA ethnicity are dropped (afex covariates do not tolerate NA).
   covariate_info <- NULL
+  bsi_info <- NULL
   covariate_col <- NULL
   if (!is.null(args[["ethnicity-covariate"]])) {
     token <- args[["ethnicity-covariate"]]
@@ -881,6 +1184,35 @@ main <- function() {
       n_european = n_european, n_non_european = n_non_european
     )
     covariate_col <- "european_descent"
+  }
+
+  # Optional mental-health covariate-adjustment (ANCOVA) sensitivity. A
+  # continuous symptom score from participants.tsv (typically BSI-53 GSI) is
+  # joined onto amps and passed to afex::aov_ez as a between-subjects nuisance
+  # covariate, controlling for between-group differences in overall symptom
+  # load. Participants with NA covariate are dropped (afex covariates do not
+  # tolerate NA).
+  if (!is.null(args[["bsi-covariate"]])) {
+    col <- args[["bsi-covariate"]]
+    participants <- read_tsv(args[["participants-tsv"]], comment = "#",
+                             show_col_types = FALSE)
+    cov_tbl <- extract_numeric_covariate(participants, col)
+    n_before <- length(unique(amps$participant_id))
+    amps <- amps %>% inner_join(cov_tbl, by = "participant_id")
+    n_after <- length(unique(amps$participant_id))
+    cov_pid <- amps %>% distinct(participant_id, .data[[col]])
+    vals <- cov_pid[[col]]
+    cat("BSI covariate '", col, "': kept ", n_after, "/", n_before,
+        " (M = ", sprintf("%.2f", mean(vals)),
+        ", SD = ", sprintf("%.2f", sd(vals)), ")\n", sep = "")
+    label <- if (col == "bsi53_gsi") "BSI-53 GSI" else col
+    bsi_info <- list(
+      column = col, label = label,
+      n_before = n_before, n_after = n_after,
+      mean = mean(vals), sd = sd(vals),
+      min = min(vals), max = max(vals)
+    )
+    covariate_col <- col
   }
 
   subjects <- amps %>% distinct(participant_id, group)
@@ -929,13 +1261,16 @@ main <- function() {
   dir.create(dirname(out_report), recursive = TRUE, showWarnings = FALSE)
 
   render_markdown(per_cluster, sample_info, out_report,
-                  filter_info = filter_info, covariate_info = covariate_info)
+                  filter_info = filter_info, covariate_info = covariate_info,
+                  bsi_info = bsi_info)
   cat("Wrote ", out_report, "\n", sep = "")
   render_table_tex(per_cluster, out_table,
-                   filter_info = filter_info, covariate_info = covariate_info)
+                   filter_info = filter_info, covariate_info = covariate_info,
+                   bsi_info = bsi_info)
   cat("Wrote ", out_table, "\n", sep = "")
   render_prose_tex(per_cluster, sample_info, out_prose,
-                   filter_info = filter_info, covariate_info = covariate_info)
+                   filter_info = filter_info, covariate_info = covariate_info,
+                   bsi_info = bsi_info)
   cat("Wrote ", out_prose, "\n", sep = "")
 }
 

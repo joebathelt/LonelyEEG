@@ -21,11 +21,20 @@ MAIN_SENS_EUROPE_TABLE_TEX = "results/main_analysis_sensitivity_europe_table.tex
 MAIN_SENS_COV_REPORT = "results/main_analysis_sensitivity_ethnicity_covariate_report.md"
 MAIN_SENS_COV_PROSE_TEX = "results/main_analysis_sensitivity_ethnicity_covariate_results.tex"
 MAIN_SENS_COV_TABLE_TEX = "results/main_analysis_sensitivity_ethnicity_covariate_table.tex"
+MAIN_SENS_BSI_REPORT = "results/main_analysis_sensitivity_bsi_gsi_covariate_report.md"
+MAIN_SENS_BSI_PROSE_TEX = "results/main_analysis_sensitivity_bsi_gsi_covariate_results.tex"
+MAIN_SENS_BSI_TABLE_TEX = "results/main_analysis_sensitivity_bsi_gsi_covariate_table.tex"
 IMAGE_RATINGS_TSV = "results/image_ratings.tsv"
 RATINGS_REPORT = "results/ratings_analysis_report.md"
 RATINGS_PROSE_TEX = "results/ratings_analysis_results.tex"
 RATINGS_TABLE_TEX = "results/ratings_analysis_table.tex"
 FIGURE_ERPS = "results/figure_erps.pdf"
+CLUSTER_AMPLITUDES_ALL_REPS_TSV = "results/cluster_amplitudes_all_reps.tsv"
+REPETITION_PREDICTIONS_TSV = "results/repetition_model_predictions.tsv"
+REP_TRENDS_REPORT = "results/repetition_trends_report.md"
+REP_TRENDS_PROSE_TEX = "results/repetition_trends_results.tex"
+REP_TRENDS_TABLE_TEX = "results/repetition_trends_table.tex"
+FIGURE_REP_TRENDS = "results/figure_repetition_trends.pdf"
 TESTS_REPORT = "results/tests_report.md"
 
 
@@ -45,11 +54,20 @@ rule all:
         MAIN_SENS_COV_REPORT,
         MAIN_SENS_COV_PROSE_TEX,
         MAIN_SENS_COV_TABLE_TEX,
+        MAIN_SENS_BSI_REPORT,
+        MAIN_SENS_BSI_PROSE_TEX,
+        MAIN_SENS_BSI_TABLE_TEX,
         IMAGE_RATINGS_TSV,
         RATINGS_REPORT,
         RATINGS_PROSE_TEX,
         RATINGS_TABLE_TEX,
         FIGURE_ERPS,
+        CLUSTER_AMPLITUDES_ALL_REPS_TSV,
+        REPETITION_PREDICTIONS_TSV,
+        REP_TRENDS_REPORT,
+        REP_TRENDS_PROSE_TEX,
+        REP_TRENDS_TABLE_TEX,
+        FIGURE_REP_TRENDS,
         TESTS_REPORT
 
 
@@ -195,6 +213,31 @@ rule sensitivity_analysis_ethnicity_covariate:
         "--out-table-tex {output.table}"
 
 
+# Sensitivity analysis (ANCOVA): re-runs the main 3-way mixed ANOVA on the
+# full post-QC sample (participants with NA bsi53_gsi dropped) with the BSI-53
+# General Severity Index (overall mental-health symptom load) included as a
+# continuous between-subjects nuisance covariate via
+# afex::aov_ez(covariate = ...). Controls for between-group differences in
+# co-occurring mental-health difficulties confounded with loneliness. Mutually
+# exclusive with --ethnicity-filter and --ethnicity-covariate.
+rule sensitivity_analysis_bsi_gsi_covariate:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_TSV,
+        participants=PARTICIPANTS_TSV,
+    output:
+        report=MAIN_SENS_BSI_REPORT,
+        prose=MAIN_SENS_BSI_PROSE_TEX,
+        table=MAIN_SENS_BSI_TABLE_TEX,
+    shell:
+        "Rscript code/6_main_analysis.R "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--participants-tsv {input.participants} "
+        "--bsi-covariate bsi53_gsi "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table}"
+
+
 rule extract_ratings:
     input:
         participants=PARTICIPANTS_TSV,
@@ -257,6 +300,66 @@ rule figure_erps:
         "--out-figure {output.figure}"
 
 
+# Per-cluster mean ERP amplitudes across repetitions 1..6 per emotion,
+# feeding the exploratory linear/log repetition-trend analysis. Reuses the
+# cluster definitions and analytic-sample filter from 5_extract_amplitudes.py.
+# Rep 7 is excluded upstream as too noisy (too few trials per participant).
+rule extract_amplitudes_all_reps:
+    input:
+        participants=PARTICIPANTS_TSV,
+        qc=QC_TSV,
+        preprocess_done=".snakemake_sentinels/preprocess.done",
+    output:
+        tsv=CLUSTER_AMPLITUDES_ALL_REPS_TSV,
+    shell:
+        "python code/11_extract_amplitudes_all_reps.py "
+        "--participants-tsv {input.participants} "
+        "--qc-tsv {input.qc} "
+        f"--bids-folder {BIDS} "
+        "--out-tsv {output.tsv}"
+
+
+# Exploratory: per cluster x emotion, fit a linear mixed-effects model with
+# repetition as a continuous predictor (linear and logarithmic forms);
+# Bonferroni-corrected fixed-effect tests of the group main effect (rep-1
+# intercept difference) and group:rep interaction (slope difference);
+# AIC + marginal/conditional R^2 to recommend a model per cell. Writes the
+# population-level predictions per (cluster, emotion, model, group, rep)
+# for the figure script.
+rule repetition_trends_analysis:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_ALL_REPS_TSV,
+    output:
+        report=REP_TRENDS_REPORT,
+        prose=REP_TRENDS_PROSE_TEX,
+        table=REP_TRENDS_TABLE_TEX,
+        predictions=REPETITION_PREDICTIONS_TSV,
+    shell:
+        "Rscript code/13_repetition_trends_analysis.R "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table} "
+        "--out-predictions-tsv {output.predictions}"
+
+
+# Figure: 3 (cluster) x 2 (emotion) grid showing per-group mean amplitude
+# trajectories across reps 1..6 with SE bars, overlaid with the LMM
+# population-level predictions for linear and log models (recommended
+# model solid, alternative dashed).
+rule figure_repetition_trends:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_ALL_REPS_TSV,
+        predictions=REPETITION_PREDICTIONS_TSV,
+    output:
+        figure=FIGURE_REP_TRENDS,
+    shell:
+        "python code/14_figure_repetition_trends.py "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--predictions-tsv {input.predictions} "
+        "--out-figure {output.figure}"
+
+
 # Unit-test suites for the two scripts whose helpers we own end-to-end
 # (preprocessing helpers and the main R analysis). The renderer drives both
 # suites and emits a single markdown report; it returns non-zero if any test
@@ -293,5 +396,9 @@ rule clean_analysis:
         f"{MAIN_REPORT} {MAIN_PROSE_TEX} {MAIN_TABLE_TEX} "
         f"{MAIN_SENS_EUROPE_REPORT} {MAIN_SENS_EUROPE_PROSE_TEX} {MAIN_SENS_EUROPE_TABLE_TEX} "
         f"{MAIN_SENS_COV_REPORT} {MAIN_SENS_COV_PROSE_TEX} {MAIN_SENS_COV_TABLE_TEX} "
+        f"{MAIN_SENS_BSI_REPORT} {MAIN_SENS_BSI_PROSE_TEX} {MAIN_SENS_BSI_TABLE_TEX} "
+        f"{CLUSTER_AMPLITUDES_ALL_REPS_TSV} {REPETITION_PREDICTIONS_TSV} "
+        f"{REP_TRENDS_REPORT} {REP_TRENDS_PROSE_TEX} {REP_TRENDS_TABLE_TEX} "
+        f"{FIGURE_REP_TRENDS} "
         f"{TESTS_REPORT} "
         f"{FIGURE_ERPS}"

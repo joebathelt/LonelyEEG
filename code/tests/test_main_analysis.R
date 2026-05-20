@@ -324,6 +324,73 @@ test_that("binarise_ethnicity returns numeric (afex covariate requirement)", fun
 })
 
 # ---------------------------------------------------------------------------
+# extract_numeric_covariate (BSI-53 GSI / continuous covariate sensitivity)
+# ---------------------------------------------------------------------------
+test_that("extract_numeric_covariate returns the named column as numeric", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              bsi53_gsi = c(0.32, 1.06, 1.21))
+  r <- extract_numeric_covariate(p, "bsi53_gsi")
+  expect_identical_(r$participant_id, c("sub-01", "sub-02", "sub-03"))
+  expect_equal_(r$bsi53_gsi, c(0.32, 1.06, 1.21))
+  expect_true_(is.numeric(r$bsi53_gsi))
+})
+
+test_that("extract_numeric_covariate drops NA rows", function() {
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              bsi53_gsi = c(0.32, NA_real_, 1.21))
+  r <- extract_numeric_covariate(p, "bsi53_gsi")
+  expect_identical_(r$participant_id, c("sub-01", "sub-03"))
+  expect_equal_(r$bsi53_gsi, c(0.32, 1.21))
+})
+
+test_that("extract_numeric_covariate errors on a missing column", function() {
+  p <- tibble(participant_id = c("sub-01"), bsi53_gsi = c(0.32))
+  err <- tryCatch(extract_numeric_covariate(p, "no_such_column"),
+                  error = function(e) e)
+  expect_true_(inherits(err, "error"))
+  expect_match_(conditionMessage(err), "not found in participants.tsv")
+})
+
+test_that("extract_numeric_covariate coerces string numerics and drops non-numeric", function() {
+  # Guards against participants.tsv emitting numeric columns as strings (with
+  # "n/a" or empty cells that should not enter the analytic sample).
+  p <- tibble(participant_id = c("sub-01", "sub-02", "sub-03"),
+              bsi53_gsi = c("0.32", "n/a", "1.21"))
+  r <- extract_numeric_covariate(p, "bsi53_gsi")
+  expect_identical_(r$participant_id, c("sub-01", "sub-03"))
+  expect_equal_(r$bsi53_gsi, c(0.32, 1.21))
+})
+
+# ---------------------------------------------------------------------------
+# Bayes Factor t-test helper
+# ---------------------------------------------------------------------------
+test_that("bf_ttest returns finite BF10 > 0 with BF01 = 1/BF10 on separable groups", function() {
+  set.seed(11)
+  a <- rnorm(30, mean = 1.0, sd = 1)
+  b <- rnorm(30, mean = 0.0, sd = 1)
+  r <- bf_ttest(a, b)
+  expect_true_(is.finite(r$bf10) && r$bf10 > 0)
+  expect_true_(is.finite(r$bf01) && r$bf01 > 0)
+  expect_equal_(r$bf01, 1 / r$bf10)
+  expect_true_(r$bf10 > 1)  # genuine difference -> evidence for H1
+})
+
+test_that("bf_ttest favours the null on identically-distributed groups", function() {
+  set.seed(12)
+  a <- rnorm(30, mean = 0, sd = 1)
+  b <- rnorm(30, mean = 0, sd = 1)
+  r <- bf_ttest(a, b)
+  expect_true_(is.finite(r$bf10) && r$bf10 > 0)
+  expect_true_(r$bf01 > 1)  # no difference -> evidence for H0
+})
+
+test_that("bf_ttest returns NA fields when a group has < 2 observations", function() {
+  r <- bf_ttest(c(1.0), c(2.0, 3.0, 4.0))
+  expect_true_(is.na(r$bf10))
+  expect_true_(is.na(r$bf01))
+})
+
+# ---------------------------------------------------------------------------
 # welch_row
 # ---------------------------------------------------------------------------
 test_that("welch_row returns a 1-row tibble with the expected columns", function() {
@@ -336,13 +403,15 @@ test_that("welch_row returns a 1-row tibble with the expected columns", function
   expected_cols <- c("comparison", "n_lonely", "n_nonlonely",
                      "mean_lonely", "se_lonely",
                      "mean_nonlonely", "se_nonlonely",
-                     "t", "df", "p", "d")
+                     "t", "df", "p", "d", "BF10", "BF01")
   expect_identical_(colnames(row), expected_cols)
   expect_equal_(nrow(row), 1)
   expect_identical_(row$comparison, "test cell")
   expect_equal_(row$n_lonely, 4); expect_equal_(row$n_nonlonely, 4)
   expect_equal_(row$mean_lonely, 2.5)
   expect_equal_(row$mean_nonlonely, 6.5)
+  expect_true_(is.finite(row$BF10) && row$BF10 > 0)
+  expect_equal_(row$BF01, 1 / row$BF10)
 })
 
 # ---------------------------------------------------------------------------
@@ -399,12 +468,35 @@ simulate_long <- function(n_per_group = 12,
 # Convenience: pull the (uncorrected) p-value for a single ANOVA Source row.
 p_for <- function(tbl, source) tbl$p_unc[tbl$Source == source]
 
+# ---------------------------------------------------------------------------
+# Bayes Factor ANOVA inclusion helper (requires simulate_long defined above)
+# ---------------------------------------------------------------------------
+test_that("bf_anova_inclusion returns one row per ANOVA term with finite BF10/BF01", function() {
+  d <- simulate_long(n_per_group = 14, group_effect = 1.5, seed = 31)
+  bf <- bf_anova_inclusion(d)
+  expect_identical_(bf$Source,
+                    c("group", "emotion", "repetition",
+                      "emotion x group", "repetition x group",
+                      "emotion x repetition", "emotion x repetition x group"))
+  expect_equal_(nrow(bf), 7)
+  expect_true_(all(is.finite(bf$BF10) & bf$BF10 > 0))
+  expect_equal_(bf$BF01, 1 / bf$BF10)
+})
+
+test_that("bf_anova_inclusion: injected group effect produces BF10 > 1 for group", function() {
+  d <- simulate_long(n_per_group = 20, group_effect = 4.0, seed = 13)
+  bf <- bf_anova_inclusion(d)
+  grp <- bf[bf$Source == "group", ]
+  expect_true_(grp$BF10 > 1)
+})
+
 test_that("fit_mixed_anova returns the expected schema and row order", function() {
   d <- simulate_long(n_per_group = 12, group_effect = 0)
   tbl <- fit_mixed_anova(d)
   expect_identical_(colnames(tbl),
                     c("Source", "df1", "df2", "F", "p_unc", "pes",
-                      "p_bonf", "significant_at_cluster_alpha"))
+                      "p_bonf", "significant_at_cluster_alpha",
+                      "BF10", "BF01"))
   expect_identical_(tbl$Source,
                     c("group", "emotion", "repetition",
                       "emotion x group", "repetition x group",
@@ -536,7 +628,8 @@ test_that("fit_mixed_anova with covariate preserves the 7-row schema", function(
   tbl <- fit_mixed_anova(d, covariate_col = "european_descent")
   expect_identical_(colnames(tbl),
                     c("Source", "df1", "df2", "F", "p_unc", "pes",
-                      "p_bonf", "significant_at_cluster_alpha"))
+                      "p_bonf", "significant_at_cluster_alpha",
+                      "BF10", "BF01"))
   expect_identical_(tbl$Source,
                     c("group", "emotion", "repetition",
                       "emotion x group", "repetition x group",
@@ -554,6 +647,55 @@ test_that("fit_mixed_anova exposes the covariate's main-effect row as an attribu
   expect_identical_(cr$Source, "european_descent")
   expect_true_(is.finite(cr$F))
   expect_true_(is.finite(cr$p_unc))
+})
+
+# Attach a per-subject continuous covariate (e.g., BSI-53 GSI) drawn from a
+# normal distribution. `effect_on_amp` is the linear shift in amplitude per
+# unit of the covariate; setting it non-zero injects a covariate-driven effect
+# that the covariate adjustment should absorb.
+attach_continuous_covariate <- function(d, mean_lonely = 0, mean_nonlonely = 0,
+                                         sd = 0.5, effect_on_amp = 0,
+                                         seed = 501) {
+  subjects <- d %>% distinct(participant_id, group)
+  set.seed(seed)
+  subjects$bsi53_gsi <- ifelse(
+    subjects$group == "Lonely",
+    rnorm(nrow(subjects), mean = mean_lonely, sd = sd),
+    rnorm(nrow(subjects), mean = mean_nonlonely, sd = sd)
+  )
+  out <- d %>% left_join(subjects, by = c("participant_id", "group"))
+  out$amplitude <- out$amplitude + effect_on_amp * out$bsi53_gsi
+  out
+}
+
+test_that("fit_mixed_anova continuous covariate stays numeric (df1 = 1)", function() {
+  # Regression test: prior to factorize = FALSE, afex coerced the covariate
+  # column to a factor with n_subjects-1 levels, which ate all between-
+  # subjects df and broke the model. The covariate's main-effect row must
+  # have df1 = 1, not n_subjects - 1.
+  d <- attach_continuous_covariate(simulate_long(n_per_group = 20, seed = 451),
+                                    mean_lonely = 0.5, mean_nonlonely = 0.5,
+                                    effect_on_amp = 1.0, seed = 451)
+  tbl <- fit_mixed_anova(d, covariate_col = "bsi53_gsi")
+  cr <- attr(tbl, "covariate_row")
+  expect_equal_(cr$df1, 1)
+  # df2 should be roughly n_subjects - 3 (intercept, group, covariate); allow
+  # some flex but it must NOT be the n_subjects-scale value we saw before.
+  if (cr$df2 < 30)
+    stop(sprintf("covariate df2 = %s; expected ~37 (n_subjects - 3)", cr$df2))
+})
+
+test_that("fit_mixed_anova continuous covariate absorbs covariate-driven amplitude shift", function() {
+  # When the covariate strongly predicts amplitude but is balanced across
+  # groups, the covariate row should be highly significant while the group
+  # effect remains near null. This is the canonical ANCOVA win.
+  d <- attach_continuous_covariate(simulate_long(n_per_group = 30, seed = 461),
+                                    mean_lonely = 1.0, mean_nonlonely = 1.0,
+                                    sd = 1.0, effect_on_amp = 1.5, seed = 461)
+  tbl <- fit_mixed_anova(d, covariate_col = "bsi53_gsi")
+  cr <- attr(tbl, "covariate_row")
+  expect_true_(cr$F > 5)
+  expect_true_(cr$p_unc < 0.05)
 })
 
 test_that("fit_mixed_anova covariate de-confounds a spurious group effect", function() {
@@ -588,7 +730,8 @@ make_fake_anova_tbl <- function(sig_terms) {
     df1 = rep(1, 7), df2 = rep(20, 7),
     F = rep(1, 7), p_unc = rep(0.5, 7), pes = rep(0.01, 7),
     p_bonf = rep(1.0, 7),
-    significant_at_cluster_alpha = sources %in% sig_terms
+    significant_at_cluster_alpha = sources %in% sig_terms,
+    BF10 = rep(0.5, 7), BF01 = rep(2.0, 7)
   )
 }
 
@@ -702,6 +845,7 @@ make_fake_posthoc <- function(
     t = c(3.0, 3.0), df = c(38.5, 38.5),
     p = c(p_rep1, p_rep5),
     d = c(0.9, 0.9),
+    BF10 = c(10.0, 10.0), BF01 = c(0.1, 0.1),
     alpha_bonf = c(alpha, alpha),
     p_bonferroni = pmin(c(p_rep1, p_rep5) * 2, 1.0),
     significant = c(p_rep1 < alpha, p_rep5 < alpha)
@@ -790,6 +934,7 @@ fake_per_cluster <- function() {
     mean_lonely = -1.10, se_lonely = 0.18,
     mean_nonlonely = -0.40, se_nonlonely = 0.16,
     t = -2.85, df = 39.2, p = 0.007, d = -0.85,
+    BF10 = 7.0, BF01 = 1/7.0,
     alpha_bonf = 0.05, p_bonferroni = 0.007, significant = TRUE
   )
 
@@ -976,6 +1121,85 @@ test_that("render_prose_tex covariate variant: preface describes the ANCOVA setu
   expect_match_(body, "nuisance covariate")
   expect_match_(body, "indicator of Europe descent")
   expect_match_(body, "Europe-descent \\$n=24\\$")
+})
+
+# Mirrors fake_per_cluster_with_covariate but stamps the covariate_row with
+# the BSI column name (what main() builds when --bsi-covariate is supplied).
+fake_per_cluster_with_bsi <- function() {
+  per <- fake_per_cluster()
+  per[[1]]$covariate_row <- tibble(
+    Source = "bsi53_gsi",
+    df1 = 1, df2 = 38,
+    F = 5.40, p_unc = 0.025, pes = 0.12,
+    p_bonf = 0.075, significant_at_cluster_alpha = FALSE
+  )
+  per
+}
+
+# Reasonable defaults for the BSI-53 GSI summary stats on the analytic sample;
+# values mirror the magnitudes we see in the real participants.tsv (mean ~ 0.85,
+# range roughly 0.02-2.92).
+fake_bsi_info <- function() {
+  list(column = "bsi53_gsi", label = "BSI-53 GSI",
+       n_before = 42, n_after = 41,
+       mean = 0.85, sd = 0.45, min = 0.06, max = 2.85)
+}
+
+test_that("render_markdown BSI variant: title and preface name the BSI-53 GSI covariate", function() {
+  tmp <- tempfile(fileext = ".md")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_bsi()
+  sample_info <- list(n_total = 41, n_lonely = 20, n_nonlonely = 21)
+  render_markdown(per, sample_info, tmp, bsi_info = fake_bsi_info())
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "BSI-53 GSI covariate")
+  expect_match_(body, "continuous between-subjects nuisance covariate")
+  # The per-cluster note must now reflect the actual covariate column name
+  # (rather than the old hard-coded "european_descent").
+  expect_match_(body, "Nuisance covariate \\(bsi53_gsi\\)")
+  expect_match_(body, "mental-health difficulties")
+})
+
+test_that("render_table_tex BSI variant: caption mentions the BSI-53 GSI covariate", function() {
+  tmp <- tempfile(fileext = ".tex")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_bsi()
+  render_table_tex(per, tmp, bsi_info = fake_bsi_info())
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "nuisance covariate")
+  expect_match_(body, "BSI-53 GSI")
+  expect_match_(body, "mental-health symptom load")
+})
+
+test_that("render_prose_tex BSI variant: preface describes the BSI-53 GSI ANCOVA setup", function() {
+  tmp <- tempfile(fileext = ".tex")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_bsi()
+  sample_info <- list(n_total = 41, n_lonely = 20, n_nonlonely = 21)
+  render_prose_tex(per, sample_info, tmp, bsi_info = fake_bsi_info())
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "BSI-53 GSI score")
+  expect_match_(body, "continuous")
+  expect_match_(body, "nuisance covariate")
+  expect_match_(body, "mental-health symptom load")
+})
+
+test_that("render_markdown BSI variant overrides covariate_info when both are passed", function() {
+  # Sanity: bsi_info takes precedence in the renderer's title/preface branches.
+  # This is the contract main() relies on; the orchestrator never sets both,
+  # but the renderer should still resolve unambiguously.
+  tmp <- tempfile(fileext = ".md")
+  on.exit(unlink(tmp), add = TRUE)
+  per <- fake_per_cluster_with_bsi()
+  sample_info <- list(n_total = 41, n_lonely = 20, n_nonlonely = 21)
+  covariate_info <- list(token = "Europe", n_before = 42, n_after = 39,
+                         n_european = 24, n_non_european = 15)
+  render_markdown(per, sample_info, tmp,
+                  covariate_info = covariate_info, bsi_info = fake_bsi_info())
+  body <- paste(readLines(tmp), collapse = "\n")
+  expect_match_(body, "BSI-53 GSI covariate")
+  if (grepl("European-descent covariate", body))
+    stop("BSI title should win over European-descent title when both info objects are passed")
 })
 
 # ---------------------------------------------------------------------------
