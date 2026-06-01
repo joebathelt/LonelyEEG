@@ -12,6 +12,8 @@ BSI_SUBSCALES_TSV = "results/bsi_subscales_table.tsv"
 CLUSTER_AMPLITUDES_TSV = "results/cluster_amplitudes.tsv"
 CLUSTER_WAVEFORMS_TSV = "results/cluster_waveforms.tsv"
 CLUSTER_CHANNELS_TSV = "results/cluster_channel_positions.tsv"
+CLUSTER_DIFF_WAVEFORMS_TSV = "results/cluster_difference_waveforms.tsv"
+CLUSTER_DIFF_AMPLITUDES_TSV = "results/cluster_difference_amplitudes.tsv"
 MAIN_REPORT = "results/main_analysis_report.md"
 MAIN_PROSE_TEX = "results/main_analysis_results.tex"
 MAIN_TABLE_TEX = "results/main_analysis_table.tex"
@@ -29,12 +31,16 @@ RATINGS_REPORT = "results/ratings_analysis_report.md"
 RATINGS_PROSE_TEX = "results/ratings_analysis_results.tex"
 RATINGS_TABLE_TEX = "results/ratings_analysis_table.tex"
 FIGURE_ERPS = "results/figure_erps.pdf"
+FIGURE_DIFF_WAVES = "results/figure_difference_waves.pdf"
 CLUSTER_AMPLITUDES_ALL_REPS_TSV = "results/cluster_amplitudes_all_reps.tsv"
 REPETITION_PREDICTIONS_TSV = "results/repetition_model_predictions.tsv"
 REP_TRENDS_REPORT = "results/repetition_trends_report.md"
 REP_TRENDS_PROSE_TEX = "results/repetition_trends_results.tex"
 REP_TRENDS_TABLE_TEX = "results/repetition_trends_table.tex"
 FIGURE_REP_TRENDS = "results/figure_repetition_trends.pdf"
+CONTROL_GROUP_REPORT = "results/control_group_effects_report.md"
+CONTROL_GROUP_PROSE_TEX = "results/control_group_effects_results.tex"
+CONTROL_GROUP_TABLE_TEX = "results/control_group_effects_table.tex"
 TESTS_REPORT = "results/tests_report.md"
 
 
@@ -62,12 +68,16 @@ rule all:
         RATINGS_PROSE_TEX,
         RATINGS_TABLE_TEX,
         FIGURE_ERPS,
+        FIGURE_DIFF_WAVES,
         CLUSTER_AMPLITUDES_ALL_REPS_TSV,
         REPETITION_PREDICTIONS_TSV,
         REP_TRENDS_REPORT,
         REP_TRENDS_PROSE_TEX,
         REP_TRENDS_TABLE_TEX,
         FIGURE_REP_TRENDS,
+        CONTROL_GROUP_REPORT,
+        CONTROL_GROUP_PROSE_TEX,
+        CONTROL_GROUP_TABLE_TEX,
         TESTS_REPORT
 
 
@@ -300,6 +310,48 @@ rule figure_erps:
         "--out-figure {output.figure}"
 
 
+# Within-subject difference Evokeds per individual via MNE contrasts
+# (mne.combine_evoked weights=[1, -1]): angry - happy at rep 1, and rep 5 -
+# rep 1 for angry. Emits per-subject difference waveforms and amplitudes that
+# the difference-wave figure only needs to average within group. Reuses the
+# cluster definitions and analytic-sample filter from 5_extract_amplitudes.py.
+rule extract_difference_waves:
+    input:
+        participants=PARTICIPANTS_TSV,
+        qc=QC_TSV,
+        preprocess_done=".snakemake_sentinels/preprocess.done",
+    output:
+        waveforms=CLUSTER_DIFF_WAVEFORMS_TSV,
+        amplitudes=CLUSTER_DIFF_AMPLITUDES_TSV,
+    shell:
+        "python code/5b_extract_difference_waves.py "
+        "--participants-tsv {input.participants} "
+        "--qc-tsv {input.qc} "
+        f"--bids-folder {BIDS} "
+        "--out-waveforms-tsv {output.waveforms} "
+        "--out-amplitudes-tsv {output.amplitudes}"
+
+
+# Companion to figure_erps: 3 (cluster) x 2 (comparison) grid of within-
+# subject difference waves (angry - happy at rep 1; rep 1 - rep 5 for angry),
+# one trace per group with SE shading, plus topomap and difference-amplitude
+# raincloud insets. Differences are computed per individual upstream
+# (extract_difference_waves); this rule only group-averages them.
+rule figure_difference_waves:
+    input:
+        diff_waveforms=CLUSTER_DIFF_WAVEFORMS_TSV,
+        diff_amplitudes=CLUSTER_DIFF_AMPLITUDES_TSV,
+        channels=CLUSTER_CHANNELS_TSV,
+    output:
+        figure=FIGURE_DIFF_WAVES,
+    shell:
+        "python code/8b_figure_difference_waves.py "
+        "--diff-waveforms-tsv {input.diff_waveforms} "
+        "--diff-amplitudes-tsv {input.diff_amplitudes} "
+        "--channels-tsv {input.channels} "
+        "--out-figure {output.figure}"
+
+
 # Per-cluster mean ERP amplitudes across repetitions 1..6 per emotion,
 # feeding the exploratory linear/log repetition-trend analysis. Reuses the
 # cluster definitions and analytic-sample filter from 5_extract_amplitudes.py.
@@ -360,6 +412,28 @@ rule figure_repetition_trends:
         "--out-figure {output.figure}"
 
 
+# Control analysis (positive control / manipulation check): within the
+# comparison (Non-Lonely) group only, three within-subject paired t-tests on
+# the pre-extracted cluster amplitudes confirm the canonical effects -- an
+# emotion effect (angry vs happy at first presentation) at Hypersensitivity 1
+# and 2, and a repetition-suppression effect (rep 1 vs rep 5 for angry faces)
+# at Hyperalertness. One-tailed in the pre-specified direction, with directional
+# Bayes Factors. Reuses results/cluster_amplitudes.tsv from extract_amplitudes.
+rule control_group_effects:
+    input:
+        amplitudes=CLUSTER_AMPLITUDES_TSV,
+    output:
+        report=CONTROL_GROUP_REPORT,
+        prose=CONTROL_GROUP_PROSE_TEX,
+        table=CONTROL_GROUP_TABLE_TEX,
+    shell:
+        "Rscript code/15_control_group_effects.R "
+        "--amplitudes-tsv {input.amplitudes} "
+        "--out-report {output.report} "
+        "--out-prose-tex {output.prose} "
+        "--out-table-tex {output.table}"
+
+
 # Unit-test suites for the two scripts whose helpers we own end-to-end
 # (preprocessing helpers and the main R analysis). The renderer drives both
 # suites and emits a single markdown report; it returns non-zero if any test
@@ -400,5 +474,7 @@ rule clean_analysis:
         f"{CLUSTER_AMPLITUDES_ALL_REPS_TSV} {REPETITION_PREDICTIONS_TSV} "
         f"{REP_TRENDS_REPORT} {REP_TRENDS_PROSE_TEX} {REP_TRENDS_TABLE_TEX} "
         f"{FIGURE_REP_TRENDS} "
+        f"{CONTROL_GROUP_REPORT} {CONTROL_GROUP_PROSE_TEX} {CONTROL_GROUP_TABLE_TEX} "
         f"{TESTS_REPORT} "
-        f"{FIGURE_ERPS}"
+        f"{FIGURE_ERPS} "
+        f"{FIGURE_DIFF_WAVES}"
