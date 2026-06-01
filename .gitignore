@@ -1,0 +1,10 @@
+# Helper directories
+.snakemake/
+.snakemake_sentinels/
+code/__pycache__/
+
+# Ignore data and experiment files
+data/
+experiment/movieTask/
+experiment/.Rhistory
+results/
